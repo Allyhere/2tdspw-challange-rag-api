@@ -1,0 +1,14 @@
+id,nome,tipo,especie,recorrencia,intervaloMeses,duracaoPadraoMeses,idadeMinAnos,idadeMaxAnos,pesoMinKg,pesoMaxKg,somenteNaoCastrado
+v10,V10,vacina,cachorro,recurrent,12,60,0,20,0,90,false
+v8,V8,vacina,cachorro,recurrent,12,60,0,20,0,90,false
+antirabica,Antirrábica,vacina,ambos,recurrent,12,60,0.25,20,0,90,false
+giardia,Giárdia,vacina,cachorro,recurrent,12,36,0,20,0,90,false
+vermifugo,Vermífugo,terapia,ambos,recurrent,3,60,0,20,0,90,false
+hemograma,Hemograma,exame,ambos,recurrent,12,60,0,20,0,90,false
+exame-fezes,Exame de fezes,exame,ambos,recurrent,6,60,0,20,0,90,false
+castracao,Castração,procedimento,ambos,single,,1,0.5,20,0,90,true
+v5,V5,vacina,gato,recurrent,12,60,0,20,0,15,false
+felv,Vacina FeLV,vacina,gato,recurrent,12,36,0,1,0,15,false
+teste-fiv-felv,Teste FIV/FeLV,exame,gato,single,,1,0,20,0,15,false
+controle-peso,Avaliação de peso e escore corporal,exame,ambos,recurrent,6,60,0,20,0,90,false
+ultrassom-abdominal,Ultrassom abdominal,exame,ambos,single,,12,1,20,0,90,false
