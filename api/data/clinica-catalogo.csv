@@ -12,3 +12,5 @@ felv,Vacina FeLV,vacina,gato,recurrent,12,36,0,1,0,15,false
 teste-fiv-felv,Teste FIV/FeLV,exame,gato,single,,1,0,20,0,15,false
 controle-peso,Avaliação de peso e escore corporal,exame,ambos,recurrent,6,60,0,20,0,90,false
 ultrassom-abdominal,Ultrassom abdominal,exame,ambos,single,,12,1,20,0,90,false
+dermatite,Tratamento de dermatite,terapia,ambos,recurrent,1,6,0,20,0,90,false
+raspado-pele,Raspado de pele,exame,ambos,single,,3,0,20,0,90,false

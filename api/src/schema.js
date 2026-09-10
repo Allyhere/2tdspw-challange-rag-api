@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+const examEntrySchema = z.object({
+  name: z.string().min(1),
+  date: z.string().min(1),
+});
+
 export const petInputSchema = z.object({
   name: z.string().min(1),
   breed: z.string().min(1),
@@ -8,6 +13,10 @@ export const petInputSchema = z.object({
   weight: z.number().positive(),
   age: z.number().min(0),
   isCastrated: z.boolean(),
+  resumo: z.string().optional(),
+  diagnostico: z.string().optional(),
+  prescription: z.array(z.string()).optional(),
+  exams: z.array(examEntrySchema).optional(),
 });
 
 function idFromUnknown(value) {

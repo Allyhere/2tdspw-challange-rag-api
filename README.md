@@ -35,11 +35,15 @@ sh scripts/request.sh
   "sex": "macho",
   "weight": 28.5,
   "age": 3,
-  "isCastrated": false
+  "isCastrated": false,
+  "resumo": "Tosse seca há 3 dias",
+  "diagnostico": "Suspeita de traqueobronquite",
+  "prescription": ["V10"],
+  "exams": [{ "name": "Hemograma", "date": "2026-09-08" }]
 }
 ```
 
-`species`: `cachorro` | `gato`.
+`species`: `cachorro` | `gato`. Campos da consulta (`resumo`, `diagnostico`, `prescription`, `exams`) são opcionais. Quando presentes, o cache demográfico é ignorado para o plano refletir a consulta.
 
 Resposta:
 
@@ -71,6 +75,7 @@ Filtro obrigatório: se o modelo inventar um nome, a API descarta. Se nada resta
   - Instituto Pasteur-SP — [antirrábica](https://www.saude.sp.gov.br/resources/instituto-pasteur/pdf/nota-tecnica/informetecnicoip01_vacinacaoantirrabicaparacaes-gatos.pdf)
   - Labrador — [AKC](https://www.akc.org/dog-breeds/labrador-retriever/)
   - Persa / DRP — [Cornell](https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/feline-health-topics/polycystic-kidney-disease)
+  - Dermatite atópica — [Merck Veterinary Manual](https://www.merckvetmanual.com/integumentary-system/atopic-dermatitis/atopic-dermatitis-in-animals)
 
 ## App mobile
 

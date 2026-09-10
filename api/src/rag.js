@@ -22,10 +22,29 @@ const embeddings = new OllamaEmbeddings({
   baseUrl: config.ollama.baseUrl,
 });
 
+function hasConsultaContext(pet) {
+  const resumo = String(pet.resumo ?? "").trim();
+  const diagnostico = String(pet.diagnostico ?? "").trim();
+  const prescription = Array.isArray(pet.prescription) ? pet.prescription : [];
+  const exams = Array.isArray(pet.exams) ? pet.exams : [];
+  return Boolean(resumo || diagnostico || prescription.length || exams.length);
+}
+
 function buildPetQuery(pet) {
   const sexo = pet.sex === "femea" ? "fêmea" : "macho";
   const castrado = pet.isCastrated ? "castrado" : "não castrado";
-  return `${pet.species} da raça ${pet.breed}, ${pet.weight}kg, ${pet.age} anos, ${sexo}, ${castrado}`;
+  let query = `${pet.species} da raça ${pet.breed}, ${pet.weight}kg, ${pet.age} anos, ${sexo}, ${castrado}`;
+  const resumo = String(pet.resumo ?? "").trim();
+  const diagnostico = String(pet.diagnostico ?? "").trim();
+  if (resumo) query += `. Resumo da consulta: ${resumo}`;
+  if (diagnostico) query += `. Diagnóstico: ${diagnostico}`;
+  if (Array.isArray(pet.prescription) && pet.prescription.length > 0) {
+    query += `. Prescrição: ${pet.prescription.join(", ")}`;
+  }
+  if (Array.isArray(pet.exams) && pet.exams.length > 0) {
+    query += `. Exames: ${pet.exams.map((exam) => exam.name).join(", ")}`;
+  }
+  return query;
 }
 
 function extractJson(text) {
@@ -129,6 +148,14 @@ function frequencyLabel(item) {
   return `a cada ${months} meses`;
 }
 
+function consultaNote(pet) {
+  const diagnostico = String(pet.diagnostico ?? "").trim();
+  const resumo = String(pet.resumo ?? "").trim();
+  if (diagnostico) return ` Diagnóstico da consulta: ${diagnostico}.`;
+  if (resumo) return ` Quadro da consulta: ${resumo}.`;
+  return "";
+}
+
 function fallbackDescription(pet, carePlan) {
   const female = pet.sex === "femea";
   const article = female ? "uma" : "um";
@@ -146,8 +173,8 @@ function fallbackDescription(pet, carePlan) {
     })
     .join(", ");
   return (
-    `${pet.name} é ${article} ${petNoun(pet)} ${String(pet.breed).toLowerCase()} de ${pet.age} anos, ${pet.weight} kg e ${status}. ` +
-    `O plano prioriza ${priorities}.`
+    `${pet.name} é ${article} ${petNoun(pet)} ${String(pet.breed).toLowerCase()} de ${pet.age} anos, ${pet.weight} kg e ${status}.` +
+    `${consultaNote(pet)} O plano prioriza ${priorities}.`
   );
 }
 
@@ -261,9 +288,10 @@ export function formatServerTiming(timings) {
 export async function generateCarePlan(pet) {
   const totalStart = performance.now();
   const timings = emptyTimings();
+  const skipCache = hasConsultaContext(pet);
 
   const cacheStart = performance.now();
-  const cached = await getCachedCarePlan(pet);
+  const cached = skipCache ? null : await getCachedCarePlan(pet);
   timings.cache = roundMs(performance.now() - cacheStart);
   if (cached?.carePlan) {
     timings.cacheStatus = "hit";
@@ -277,6 +305,9 @@ export async function generateCarePlan(pet) {
       },
       timings,
     };
+  }
+  if (skipCache) {
+    timings.cacheStatus = "bypass";
   }
 
   const query = buildPetQuery(pet);
@@ -329,10 +360,12 @@ export async function generateCarePlan(pet) {
     carePlan,
     sources: uniqueSources(chunks),
   };
-  await saveCachedCarePlan(pet, {
-    carePlan: plan.carePlan,
-    sources: plan.sources,
-  });
+  if (!skipCache) {
+    await saveCachedCarePlan(pet, {
+      carePlan: plan.carePlan,
+      sources: plan.sources,
+    });
+  }
   timings.post = roundMs(performance.now() - postStart);
   timings.total = roundMs(performance.now() - totalStart);
   return { plan, timings };
