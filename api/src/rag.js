@@ -2,9 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { OllamaEmbeddings } from "@langchain/ollama";
-
-import { config } from "./config.js";
+import { geminiEmbed, geminiGenerateJson } from "./gemini.js";
 import {
   getDriver,
   findTreatmentsForPet,
@@ -16,11 +14,6 @@ import { llmCarePlanSchema } from "./schema.js";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const promptTemplate = readFileSync(join(rootDir, "prompts/carePlan.md"), "utf8");
-
-const embeddings = new OllamaEmbeddings({
-  model: config.ollama.embedModel,
-  baseUrl: config.ollama.baseUrl,
-});
 
 function hasConsultaContext(pet) {
   const resumo = String(pet.resumo ?? "").trim();
@@ -232,32 +225,7 @@ async function invokeModel(pet, catalog) {
     .replace("{catalog}", catalogText || "(catálogo vazio)");
   const { system, user } = splitPrompt(filled);
 
-  const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: config.ollama.chatModel,
-      format: "json",
-      stream: false,
-      keep_alive: config.ollama.keepAlive,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      options: {
-        temperature: 0,
-        num_predict: config.ollama.numPredict,
-        num_ctx: config.ollama.numCtx,
-      },
-    }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(
-      payload.error || `Ollama HTTP ${response.status}`,
-    );
-  }
-  const raw = String(payload.message?.content ?? "");
+  const raw = await geminiGenerateJson({ system, user });
   console.log("LLM raw:", raw.slice(0, 800));
   const parsed = extractJson(raw);
   return llmCarePlanSchema.parse(parsed);
@@ -326,7 +294,7 @@ export async function generateCarePlan(pet) {
   const embedStart = performance.now();
   const catalogStart = performance.now();
   const [[embedding], catalog] = await Promise.all([
-    embeddings.embedDocuments([query]),
+    geminiEmbed([query], "RETRIEVAL_QUERY"),
     findTreatmentsForPet(pet),
   ]);
   timings.embed = roundMs(performance.now() - embedStart);

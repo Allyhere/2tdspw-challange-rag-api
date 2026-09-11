@@ -11,7 +11,12 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    provider: "gemini",
+    chatModel: config.gemini.chatModel,
+    embedModel: config.gemini.embedModel,
+  });
 });
 
 app.post("/v1/care-plan", async (req, res) => {

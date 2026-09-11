@@ -4,20 +4,8 @@ url: https://www.saude.sp.gov.br/resources/instituto-pasteur/pdf/nota-tecnica/in
 editora: Instituto Pasteur-SP / Ministério da Saúde
 ---
 
-# Antirrábica no Brasil — cães e gatos
+Cachorro ou gato e Antirrábica no Brasil: raiva é zoonose fatal; a vacina é saúde pública, não só rotina clínica. Mesmo sem campanha em massa, a clínica indica imunização de rotina. Primeira dose em saudáveis a partir de cerca de 12 a 16 semanas (idade mínima do catálogo ~3–4 meses).
 
-A raiva é uma zoonose fatal. No Brasil, a vacinação antirrábica de cães e gatos é medida de saúde pública, não apenas de clínica de rotina. Mesmo em estados que não fazem campanha anual em massa, a imunização de rotina na clínica veterinária continua indicada.
+Cachorro ou gato e reforço de Antirrábica: na maioria dos produtos brasileiros o reforço é anual, salvo bula e legislação local. Bloqueio de foco (doses 0, 7 e 30) é vigilância, não o plano preventivo desta clínica.
 
-## Quando vacinar
-
-A primeira dose em animais saudáveis costuma ser a partir de 3 a 4 meses de idade (cerca de 12–16 semanas), alinhada à bula do imunobiológico registrado no MAPA. O reforço é anual na maioria dos produtos usados no país, salvo bula com duração de imunidade maior e legislação local diferente.
-
-Cães e gatos nunca vacinados, em contexto de bloqueio de foco, podem seguir esquema especial definido pela vigilância (por exemplo, doses em dias 0, 7 e 30). Isso é conduta de saúde pública, não o plano preventivo padrão da clínica.
-
-## Relação com o plano da clínica
-
-No plano de cuidados da clínica, a antirrábica entra como item recorrente anual para cães e gatos a partir da idade mínima do catálogo. Não substitua a polivalente (V8/V10 ou V5) pela antirrábica: são proteções diferentes. A antirrábica também não dispensa vermifugação nem exames de rotina.
-
-## Fonte da conduta
-
-A clínica deve seguir a bula do produto e as orientações da vigilância municipal/estadual. Este resumo só contextualiza o Brasil para o assistente de plano de cuidados.
+Cachorro ou gato no plano de cuidados: Antirrábica é recorrente anual e não substitui V10, V8 ou V5. Também não dispensa Vermífugo nem Exame de fezes. Siga bula e vigilância; este texto só contextualiza o Brasil.

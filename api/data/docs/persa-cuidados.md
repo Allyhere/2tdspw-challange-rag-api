@@ -2,26 +2,14 @@
 fonte: Doença renal policística felina (PKD) — Cornell Feline Health Center
 url: https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/feline-health-topics/polycystic-kidney-disease
 editora: Cornell University College of Veterinary Medicine
+raca: Persa
+especie: gato
 ---
 
-# Gato Persa — doença renal policística e o que a clínica pode fazer
+Gato da raça Persa: a doença renal policística (DRP ou PKD) é hereditária e frequente em persas e derivadas (himalaio, exotic). Cistos podem evoluir para insuficiência renal; não há cura. Nesta clínica o exame para investigar rins é Ultrassom abdominal, com Hemograma e Avaliação de peso e escore corporal no acompanhamento. Não invente teste genético de PKD.
 
-A doença renal policística (DRP ou PKD) é hereditária e especialmente frequente em persas e raças derivadas (himalaio, british shorthair, exotic). Cistos no rim crescem com o tempo e podem evoluir para insuficiência renal. Não há cura; o manejo é o da doença renal crônica: dieta, hidratação e monitoramento.
+Gato da raça Persa com sede excessiva, urina aumentada, náusea, apatia ou perda de peso: esses sinais sugerem doença renal e justificam Ultrassom abdominal e Hemograma se estiverem no catálogo. Não use condutas de SRD no lugar do rastreio renal desta raça.
 
-## Diagnóstico disponível nesta clínica
+Gato da raça Persa e rotina: o calendário desta clínica é V5, Antirrábica, Vermífugo e Exame de fezes. Filhote ou jovem até 1 ano: Teste FIV/FeLV antes da Vacina FeLV. Adulto indoor de baixo risco pode não precisar de reforço anual de FeLV. Castração só se ainda não for castrado.
 
-Teste genético específico de PKD pode não estar no catálogo. O exame que a clínica oferece e que ajuda a investigar rins é o **ultrassom abdominal**. Hemograma e avaliação de peso também entram no acompanhamento. Não invente “teste genético PKD” se ele não estiver na lista.
-
-## Vacinas e rotina felina
-
-Persa segue o calendário felino: V5 (panleucopenia, calici, herpes, e frequentemente FeLV), antirrábica, vermífugo e exame de fezes. Filhotes e jovens até 1 ano devem receber vacina FeLV após o teste FIV/FeLV. Adultos de baixo risco podem não precisar de reforço anual de FeLV.
-
-Castração só entra se o animal não for castrado e o procedimento estiver no catálogo.
-
-## Sinais que o tutor deve observar
-
-Aumento de sede e urina, náusea, apatia e perda de peso sugerem doença renal e justificam ultrassom + hemograma, se esses itens existirem no menu da clínica.
-
-## Limite do catálogo
-
-O plano gerado só pode usar nomes exatos do CSV da clínica. Ultrassom abdominal, hemograma, V5, antirrábica, vermífugo, teste FIV/FeLV e avaliação de peso são os caminhos típicos para um persa nesta POC.
+Gato da raça Persa — o que não fazer: o plano só usa nomes do CSV. Caminhos típicos são Ultrassom abdominal, Hemograma, V5, Antirrábica, Vermífugo, Teste FIV/FeLV e Avaliação de peso e escore corporal.

@@ -117,8 +117,8 @@ function carePlanCacheKey(pet) {
     Number(pet.weight),
     Number(pet.age),
     pet.isCastrated ? "1" : "0",
-    config.ollama.embedModel,
-    config.ollama.chatModel,
+    config.gemini.embedModel,
+    config.gemini.chatModel,
   ].join("|");
   return createHash("sha256").update(canonical).digest("hex");
 }

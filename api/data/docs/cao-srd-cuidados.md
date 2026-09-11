@@ -2,24 +2,14 @@
 fonte: Diretrizes de estágio de vida canina (AAHA, 2019) — cães sem raça definida
 url: https://www.aaha.org/resources/life-stage-canine-2019/
 editora: American Animal Hospital Association (AAHA)
+raca: SRD
+especie: cachorro
 ---
 
-# Cão SRD (sem raça definida) — cuidados que a clínica pode oferecer
+Cachorro da raça SRD: vira-lata ou mestiço, sem pedigree. Individualize por estágio de vida, porte e histórico — não invente rastreio de displasia de Labrador nem painel de DNA. Histórico vacinal de rua ou abrigo deve ser tratado como incompleto: V10 (ou V8) e Antirrábica entram no plano padrão.
 
-A maioria dos cães atendidos no Brasil é SRD (vira-lata, mestiço). Sem pedigree, o plano não se ancora em risco de uma raça específica (como displasia no Labrador). A AAHA recomenda individualizar por estágio de vida, porte, estilo de vida e histórico — não inventar rastreios de raça que a clínica não oferece.
+Cachorro da raça SRD com vermes, barriga inchada, fezes moles ou acesso à rua: priorize Vermífugo e Exame de fezes. Avaliação de peso e escore corporal cobre obesidade e subnutrição. Hemograma ajuda no check-up de adulto e sênior. Giárdia cabe se vive em grupo, creche ou água compartilhada.
 
-## Histórico vacinal desconhecido
+Cachorro da raça SRD filhote ou adulto sem comprovante de vacina: série inicial até cerca de 16 semanas; adulto sem comprovante recebe primovacinação do catálogo, não protocolo de raça. Castração só se ainda não for castrado.
 
-Muitos SRD chegam de rua, abrigo ou adoção com vacinação incompleta ou desconhecida. Trate como não imunizado: polivalente V10 (ou V8) e antirrábica entram no plano padrão. Giárdia é pertinente se o cão vive em grupo, creche ou ambiente com água compartilhada.
-
-Filhotes seguem a série inicial até cerca de 16 semanas; adultos sem comprovante recebem o esquema de primovacinação do catálogo, não um protocolo “de raça”.
-
-## Peso, parasitas e rotina
-
-Obesidade e subnutrição são comuns em SRD, conforme a origem. Inclua avaliação de peso e escore corporal. Vermífugo e exame de fezes cobrem parasitas intestinais — especialmente relevantes em animais com acesso à rua. Hemograma ajuda no check-up de adultos e seniores; não invente painel de DNA, teste de leishmaniose ou sorologia de carrapato se isso não estiver no CSV.
-
-Castração, se o animal ainda não for castrado, deve ser discutida e só entra se estiver no catálogo.
-
-## O que não fazer
-
-Não copie condutas de Labrador (rastreio de displasia, ração de raça grande) nem de outras raças só porque o porte é parecido. Não recomende vacina de leishmaniose, fisioterapia ou cirurgia ortopédica se isso não estiver no menu. Use só os ids do catálogo: V10 ou V8, antirrábica, vermífugo, exame de fezes, avaliação de peso e, quando couber, hemograma, giárdia e castração.
+Cachorro da raça SRD — o que não fazer: não copie Labrador (displasia, ração de raça grande) só pelo porte. Não recomende vacina de leishmaniose, teste de carrapato ou cirurgia ortopédica se isso não estiver no CSV. Use V10 ou V8, Antirrábica, Vermífugo, Exame de fezes, Avaliação de peso e escore corporal e, quando couber, Hemograma, Giárdia e Castração.

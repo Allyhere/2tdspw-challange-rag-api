@@ -1,6 +1,6 @@
 # POC GraphRAG — plano de cuidados veterinários
 
-Serviço em português brasileiro que sugere um **plano de cuidados** a partir do perfil do pet (e, se houver, da consulta). Tudo sobe com Docker Compose: **Ollama + Neo4j + seed + API**.
+Serviço em português brasileiro que sugere um **plano de cuidados** a partir do perfil do pet (e, se houver, da consulta). Tudo sobe com Docker Compose: **Gemini + Neo4j + seed + API**.
 
 A ideia do projeto é mostrar GraphRAG na prática: o modelo de linguagem **não inventa tratamentos**. Ele só escolhe itens que existem no catálogo da clínica (`api/data/clinica-catalogo.csv`). Textos em `api/data/docs/` viram embeddings no grafo; as fontes usadas voltam no JSON da resposta.
 
@@ -10,13 +10,13 @@ A ideia do projeto é mostrar GraphRAG na prática: o modelo de linguagem **não
 
 ### 1. Subir o ambiente
 
-Na raiz do repositório:
+Na raiz do repositório, com `GEMINI_API_KEY` no `.env` (veja `.env.example`):
 
 ```bash
 docker compose up --build
 ```
 
-Na primeira vez o serviço `ollama-init` baixa `embeddinggemma` e `llama3.2:3b` (demora). Espere o `seed` terminar — ele carrega o catálogo e indexa os documentos no Neo4j. A API fica em `http://localhost:3000`.
+O `seed` chama a API do Gemini para embedding e indexa os `.md` no Neo4j. A API fica em `http://localhost:3000`. Não há Ollama neste POC.
 
 O Neo4j Browser fica em `http://localhost:7474` (usuário `neo4j`, senha `password`). Útil para inspecionar nós `Treatment`, `GuidelineChunk` e `Source`.
 
@@ -26,7 +26,7 @@ O Neo4j Browser fica em `http://localhost:7474` (usuário `neo4j`, senha `passwo
 curl -sf http://localhost:3000/health
 ```
 
-Resposta esperada: `{"ok":true}`.
+Resposta esperada: `{"ok":true,"provider":"gemini",...}`.
 
 ### 3. Pedir um plano
 
@@ -72,7 +72,7 @@ O modelo **escolhe ids** do catálogo. Recorrência, intervalo e duração **nã
 
 ## Arquitetura
 
-Quatro peças, cada uma com um papel claro:
+Três peças, cada uma com um papel claro:
 
 ```
 ┌─────────────┐     POST /v1/care-plan      ┌──────────────────┐
@@ -84,12 +84,12 @@ Quatro peças, cada uma com um papel claro:
                           │                          │                          │
                           ▼                          ▼                          ▼
                    ┌─────────────┐          ┌─────────────────┐        ┌─────────────────┐
-                   │   Ollama    │          │     Neo4j       │        │  seed (one-shot)│
-                   │  :11434     │          │  :7687 / :7474  │        │  carrega o grafo│
+                   │   Gemini    │          │     Neo4j       │        │  seed (one-shot)│
+                   │  API        │          │  :7687 / :7474  │        │  carrega o grafo│
                    │             │          │                 │        └─────────────────┘
                    │ embedding-  │          │ Treatment       │
-                   │ gemma       │          │ GuidelineChunk  │
-                   │ llama3.2:3b │          │ Source          │
+                   │ 001 (768-d) │          │ GuidelineChunk  │
+                   │ flash-lite  │          │ Source          │
                    └─────────────┘          │ CachedCarePlan  │
                                             └─────────────────┘
 ```
@@ -98,8 +98,7 @@ Quatro peças, cada uma com um papel claro:
 | --- | --- |
 | **api** | Recebe o JSON, valida, orquestra cache → retrieval → LLM → grounding. |
 | **neo4j** | Grafo da clínica: tratamentos aplicáveis, chunks de diretriz com vetor, cache de planos. |
-| **ollama** | Dois modelos locais: embedding (`embeddinggemma`) e chat (`llama3.2:3b`). |
-| **ollama-init** | Baixa os modelos uma vez e encerra. |
+| **Gemini** | Embeddings (`gemini-embedding-001`, 768-d) e chat (`gemini-3.5-flash-lite`) com JSON schema. |
 | **seed** | Lê o CSV e os `.md`, grava nós no Neo4j, gera embeddings e cria o índice vetorial. Roda uma vez e sai. |
 
 A API não guarda estado em memória além da conexão. Conhecimento clínico e catálogo vivem no grafo. O LLM só ranqueia ids já filtrados.
@@ -112,7 +111,8 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 | `api/src/schema.js` | Validação Zod do payload e do JSON do modelo. |
 | `api/src/rag.js` | Pipeline GraphRAG: query, embedding, LLM, grounding, descrição. |
 | `api/src/neo4j.js` | Cypher: filtro de tratamentos, busca vetorial, cache. |
-| `api/src/config.js` | URI, modelos, tamanho do índice vetorial (`k = 4`). |
+| `api/src/config.js` | URI, modelos Gemini, tamanho do índice vetorial (`k = 4`). |
+| `api/src/gemini.js` | Cliente REST: generateContent (JSON schema) e batchEmbedContents. |
 | `api/prompts/carePlan.md` | Prompt do chat: “copie ids do catálogo”. |
 | `api/data/seed.js` | Carga inicial do grafo. |
 | `api/data/clinica-catalogo.csv` | Menu real da clínica (ficção). |
@@ -141,7 +141,7 @@ O LLM recebe o pet + a lista já filtrada e devolve só ids. As fontes da busca 
 - **`GuidelineChunk`**: parágrafo do markdown + vetor de 768 dimensões (cosine).
 - **`Source`**: título, URL e editora lidos do front-matter do `.md`.
 
-O seed apaga o grafo, recria os tratamentos, fatia cada documento em parágrafos (> 40 caracteres), pede embeddings ao Ollama e cria o índice `guideline_index`.
+O seed apaga o grafo, recria os tratamentos, fatia cada documento em parágrafos (> 40 caracteres), pede embeddings ao Gemini (`gemini-embedding-001`, 768-d, L2) e cria o índice `guideline_index`.
 
 ### Caminho de uma requisição
 
@@ -156,13 +156,13 @@ payload
   │     • com dados de consulta → ignora o cache (o plano precisa refletir aquele atendimento)
   │
   ├─ 3. Em paralelo
-  │     • Ollama embeddings: vetoriza uma frase do tipo
+  │     • Gemini embeddings: vetoriza uma frase do tipo
   │       "cachorro da raça Labrador, 28.5kg, 3 anos, macho, não castrado. Diagnóstico: …"
   │     • Cypher: Treatments cuja espécie/idade/peso/castração batem com o pet
   │
   ├─ 4. Busca vetorial: os 4 chunks mais próximos (cosine) + Source ligada
   │
-  ├─ 5. LLM (llama3.2:3b, temperature 0, JSON)
+  ├─ 5. LLM (gemini-3.5-flash-lite, temperature 0, JSON schema)
   │     recebe o pet e o catálogo filtrado; responde {"ids":["v10","antirabica",…]}
   │
   ├─ 6. Grounding
