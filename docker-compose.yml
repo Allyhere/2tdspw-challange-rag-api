@@ -57,6 +57,8 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       EMBED_MODEL: embeddinggemma
       NLP_MODEL: llama3.2:3b
+    volumes:
+      - ./api/data:/app/data:ro
     command: ["node", "data/seed.js"]
     restart: "no"
 

@@ -17,6 +17,7 @@ export const petInputSchema = z.object({
   diagnostico: z.string().optional(),
   prescription: z.array(z.string()).optional(),
   exams: z.array(examEntrySchema).optional(),
+  currentTreatments: z.array(z.string()).optional(),
 });
 
 function idFromUnknown(value) {

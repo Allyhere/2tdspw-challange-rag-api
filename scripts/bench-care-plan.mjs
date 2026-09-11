@@ -40,6 +40,30 @@ const CASES = [
       isCastrated: true,
     },
   },
+  {
+    name: "Cão SRD",
+    payload: {
+      name: "Mel",
+      breed: "SRD",
+      species: "cachorro",
+      sex: "femea",
+      weight: 12,
+      age: 4,
+      isCastrated: true,
+    },
+  },
+  {
+    name: "Gato SRD",
+    payload: {
+      name: "Mingau",
+      breed: "SRD",
+      species: "gato",
+      sex: "macho",
+      weight: 4.5,
+      age: 3,
+      isCastrated: false,
+    },
+  },
 ];
 
 function parseServerTiming(header) {

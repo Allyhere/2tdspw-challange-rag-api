@@ -27,7 +27,13 @@ function hasConsultaContext(pet) {
   const diagnostico = String(pet.diagnostico ?? "").trim();
   const prescription = Array.isArray(pet.prescription) ? pet.prescription : [];
   const exams = Array.isArray(pet.exams) ? pet.exams : [];
-  return Boolean(resumo || diagnostico || prescription.length || exams.length);
+  return Boolean(
+    resumo ||
+      diagnostico ||
+      prescription.length ||
+      exams.length ||
+      pet.currentTreatments !== undefined,
+  );
 }
 
 function buildPetQuery(pet) {
@@ -166,16 +172,22 @@ function fallbackDescription(pet, carePlan) {
     : female
       ? "não castrada"
       : "não castrado";
+  const bio = `${pet.name} é ${article} ${petNoun(pet)} ${String(pet.breed).toLowerCase()} de ${pet.age} anos, ${pet.weight} kg e ${status}.`;
+
+  if (pet.currentTreatments !== undefined) {
+    if (pet.currentTreatments.length === 0) {
+      return `${bio}${consultaNote(pet)} Não há tratamentos no plano atual.`;
+    }
+    return `${bio}${consultaNote(pet)} O plano atual inclui ${pet.currentTreatments.join(", ")}.`;
+  }
+
   const priorities = carePlan
     .map((item) => {
       const freq = frequencyLabel(item);
       return freq ? `${item.planItemName} ${freq}` : item.planItemName;
     })
     .join(", ");
-  return (
-    `${pet.name} é ${article} ${petNoun(pet)} ${String(pet.breed).toLowerCase()} de ${pet.age} anos, ${pet.weight} kg e ${status}.` +
-    `${consultaNote(pet)} O plano prioriza ${priorities}.`
-  );
+  return `${bio}${consultaNote(pet)} O plano prioriza ${priorities}.`;
 }
 
 function splitPrompt(template) {

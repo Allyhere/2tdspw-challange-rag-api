@@ -11,6 +11,7 @@ Regras:
 - Se o pet já for castrado, omita castracao.
 - Não escolha item de outra espécie.
 - Se o JSON do pet incluir resumo, diagnóstico, prescrição ou exames da consulta, priorize itens do catálogo que apoiem esse quadro clínico.
+- Se currentTreatments vier no JSON, esse é o plano vigente (itens únicos com recorrência). Não reintroduza tratamentos que não estejam nessa lista.
 - Se o quadro citar dermatite, alergia, prurido ou lesão de pele, inclua dermatite e considere raspado-pele.
 
 ---USER---

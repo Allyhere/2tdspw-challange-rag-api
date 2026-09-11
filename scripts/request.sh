@@ -25,5 +25,7 @@ run_case() {
 
 run_case "Labrador" '{"name":"Thor","breed":"Labrador","species":"cachorro","sex":"macho","weight":28.5,"age":3,"isCastrated":false}'
 run_case "Persa" '{"name":"Luna","breed":"Persa","species":"gato","sex":"femea","weight":4,"age":2,"isCastrated":true}'
+run_case "Cão SRD" '{"name":"Mel","breed":"SRD","species":"cachorro","sex":"femea","weight":12,"age":4,"isCastrated":true}'
+run_case "Gato SRD" '{"name":"Mingau","breed":"SRD","species":"gato","sex":"macho","weight":4.5,"age":3,"isCastrated":false}'
 
 echo "OK: respostas válidas e nomes apenas do catálogo."

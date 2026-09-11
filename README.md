@@ -46,7 +46,7 @@ curl -sf -X POST http://localhost:3000/v1/care-plan \
   }'
 ```
 
-Para validar dois casos (Labrador e Persa) e recusar qualquer `planItemName` que não esteja no CSV:
+Para validar os casos de raça (Labrador, Persa) e SRD (cão e gato) e recusar qualquer `planItemName` que não esteja no CSV:
 
 ```bash
 sh scripts/request.sh
@@ -249,7 +249,15 @@ Erros úteis:
   - AAHA/AAFP 2020 — [vacinação felina](https://www.aaha.org/resources/2020-aahaaafp-feline-vaccination-guidelines/)
   - Instituto Pasteur-SP — [antirrábica](https://www.saude.sp.gov.br/resources/instituto-pasteur/pdf/nota-tecnica/informetecnicoip01_vacinacaoantirrabicaparacaes-gatos.pdf)
   - Labrador — [AKC](https://www.akc.org/dog-breeds/labrador-retriever/)
+  - Cão SRD — [AAHA, estágio de vida canina](https://www.aaha.org/resources/life-stage-canine-2019/)
   - Persa / DRP — [Cornell](https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/feline-health-topics/polycystic-kidney-disease)
+  - Gato SRD — [Cornell, cuidados com o gato](https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/feline-health-topics/choosing-and-caring-your-new-cat)
   - Dermatite atópica — [Merck Veterinary Manual](https://www.merckvetmanual.com/integumentary-system/atopic-dermatitis/atopic-dermatitis-in-animals)
 
-Para incluir um tratamento novo: acrescente uma linha no CSV (com id estável) e rode o seed de novo (`docker compose up --build`, ou `npm run seed` na pasta `api` se o stack já estiver no ar). Para incluir conhecimento novo: um `.md` em `api/data/docs/` com front-matter `fonte`, `url` e `editora`.
+Para incluir um tratamento novo: acrescente uma linha no CSV (com id estável) e rode o seed de novo. Para incluir conhecimento novo: um `.md` em `api/data/docs/` com front-matter `fonte`, `url` e `editora`. O serviço `seed` monta `api/data` em `/app/data`; para reindexar sem rebuild da imagem:
+
+```bash
+docker compose up --force-recreate --no-deps seed
+```
+
+(Ou `npm run seed` na pasta `api` se o stack já estiver no ar.)
