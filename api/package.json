@@ -4,7 +4,7 @@
   "description": "POC GraphRAG: plano de cuidados veterinarios com Gemini + Neo4j",
   "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test src/*.test.js ../scripts/*.test.mjs",
     "start": "node src/index.js",
     "dev": "node --watch --env-file ../.env src/index.js",
     "seed": "node --env-file ../.env data/seed.js"

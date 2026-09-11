@@ -23,13 +23,15 @@ Serviço novo = linha no CSV com `id` estável. Raça nova = `.md` novo, não li
 
 ## Ingestão
 
-Não apagar o grafo inteiro para acrescentar um arquivo. Upsert de `Treatment` por `id`; `Source` por `url`; re-embedar só se o SHA-256 do `.md` mudou; invalidar cache daquela `raca`+`especie` (doc global: cache todo). Subir `k` da busca vetorial (alvo 8–12) quando houver dezenas de raças.
+Não apagar o grafo inteiro para acrescentar um arquivo. Upsert de `Treatment` por `id`; `Source` por `url`; re-embedar só se o SHA-256 do `.md` mudou; invalidar cache daquela `raca`+`especie` (doc global: cache todo). `VECTOR_K` (padrão 8, alvo 8–12). Compose monta `./api/data` no **api** e no **seed** (`/app/data`).
 
 ```bash
 # pasta api, stack no ar
 npm run seed
-# ou, depois do endpoint de ingest:
-# curl -sf -X POST http://localhost:3000/v1/ingest
+# ou:
+curl -sf -X POST http://localhost:3000/v1/ingest
+# candidatos de URL (não baixa página):
+node scripts/harvest-allowlist.mjs
 ```
 
 `GEMINI_API_KEY` no `.env`. Compose: Neo4j + seed + API (sem Ollama). Porta 3000 / Browser 7474.

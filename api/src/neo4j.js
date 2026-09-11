@@ -109,10 +109,12 @@ export async function searchGuidelineChunks(embedding, k = config.vector.k) {
   }
 }
 
-function carePlanCacheKey(pet) {
+export function carePlanCacheIdentity(pet) {
+  const breed = String(pet.breed).trim().toLowerCase();
+  const species = pet.species;
   const canonical = [
-    String(pet.breed).trim().toLowerCase(),
-    pet.species,
+    breed,
+    species,
     pet.sex || "",
     Number(pet.weight),
     Number(pet.age),
@@ -120,7 +122,11 @@ function carePlanCacheKey(pet) {
     config.gemini.embedModel,
     config.gemini.chatModel,
   ].join("|");
-  return createHash("sha256").update(canonical).digest("hex");
+  return {
+    key: createHash("sha256").update(canonical).digest("hex"),
+    breed,
+    species,
+  };
 }
 
 let cacheConstraintReady = false;
@@ -143,7 +149,7 @@ export async function getCachedCarePlan(pet) {
       MATCH (c:CachedCarePlan {key: $key})
       RETURN c.payload AS payload
       `,
-      { key: carePlanCacheKey(pet) },
+      { key: carePlanCacheIdentity(pet).key },
     );
     const raw = result.records[0]?.get("payload");
     if (!raw) return null;
@@ -161,9 +167,10 @@ export async function saveCachedCarePlan(pet, plan) {
       `
       MERGE (c:CachedCarePlan {key: $key})
       ON CREATE SET c.payload = $payload, c.createdAt = datetime()
+      SET c.breed = $breed, c.species = $species
       `,
       {
-        key: carePlanCacheKey(pet),
+        ...carePlanCacheIdentity(pet),
         payload: JSON.stringify(plan),
       },
     );

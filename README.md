@@ -52,7 +52,21 @@ Para validar os casos de raça (Labrador, Persa) e SRD (cão e gato) e recusar q
 sh scripts/request.sh
 ```
 
-### 4. App mobile
+### 4. Reindexar documentos
+
+`POST /v1/ingest` relê `api/data/docs/*.md` e o CSV **sem apagar o grafo**. Re-embeda só arquivos cujo SHA-256 mudou. Body vazio = incremental; `{ "force": true }` reindexa tudo.
+
+O serviço **api** monta `./api/data` em `/app/data`: um `.md` novo entra no próximo ingest, sem rebuild da imagem.
+
+```bash
+curl -sf -X POST http://localhost:3000/v1/ingest
+```
+
+Resposta: `{ "treatments", "ingested", "skipped", "removed", "chunksWritten" }`.
+
+Candidatos de URL (só imprime; não baixa página): `node scripts/harvest-allowlist.mjs`. Resuma no [`docs-template.md`](docs-template.md), aproveite, depois ingira.
+
+### 5. App mobile
 
 Defina `EXPO_PUBLIC_RAG_API_URL` (iOS Simulator: `http://localhost:3000`; emulador Android: `http://10.0.2.2:3000`). Depois de finalizar uma consulta, a tela de sucesso chama a API e a de tratamento mostra o plano e as fontes.
 
@@ -96,10 +110,10 @@ Três peças, cada uma com um papel claro:
 
 | Serviço | Função |
 | --- | --- |
-| **api** | Recebe o JSON, valida, orquestra cache → retrieval → LLM → grounding. |
+| **api** | Recebe o JSON, valida, orquestra cache → retrieval → LLM → grounding. Também expõe `POST /v1/ingest`. |
 | **neo4j** | Grafo da clínica: tratamentos aplicáveis, chunks de diretriz com vetor, cache de planos. |
 | **Gemini** | Embeddings (`gemini-embedding-001`, 768-d) e chat (`gemini-3.5-flash-lite`) com JSON schema. |
-| **seed** | Lê o CSV e os `.md`, grava nós no Neo4j, gera embeddings e cria o índice vetorial. Roda uma vez e sai. |
+| **seed** | Chama a mesma ingestão incremental (`runIngest`): upsert de tratamentos, re-embed só se o hash do `.md` mudou. Roda uma vez e sai. |
 
 A API não guarda estado em memória além da conexão. Conhecimento clínico e catálogo vivem no grafo. O LLM só ranqueia ids já filtrados.
 
@@ -107,16 +121,19 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 
 | Caminho | Papel |
 | --- | --- |
-| `api/src/index.js` | HTTP: `/health` e `POST /v1/care-plan`. |
+| `api/src/index.js` | Sobe o HTTP (listen / shutdown). |
+| `api/src/app.js` | Rotas: `/health`, `POST /v1/care-plan`, `POST /v1/ingest`. |
 | `api/src/schema.js` | Validação Zod do payload e do JSON do modelo. |
 | `api/src/rag.js` | Pipeline GraphRAG: query, embedding, LLM, grounding, descrição. |
-| `api/src/neo4j.js` | Cypher: filtro de tratamentos, busca vetorial, cache. |
-| `api/src/config.js` | URI, modelos Gemini, tamanho do índice vetorial (`k = 4`). |
+| `api/src/ingest.js` | Upsert CSV + docs: hash skip, chunks por `Source.url`, invalida cache. |
+| `api/src/neo4j.js` | Cypher: filtro de tratamentos, busca vetorial, cache (`breed`/`species`). |
+| `api/src/config.js` | URI, modelos Gemini, `VECTOR_K` (padrão 8, alvo 8–12). |
 | `api/src/gemini.js` | Cliente REST: generateContent (JSON schema) e batchEmbedContents. |
 | `api/prompts/carePlan.md` | Prompt do chat: “copie ids do catálogo”. |
-| `api/data/seed.js` | Carga inicial do grafo. |
+| `api/data/seed.js` | One-shot: espera Neo4j/Gemini e chama `runIngest`. |
 | `api/data/clinica-catalogo.csv` | Menu real da clínica (ficção). |
 | `api/data/docs/*.md` | Resumos em pt-BR com URL da fonte. |
+| `scripts/harvest-allowlist.mjs` | Dry-run: imprime URLs de hosts permitidos (não faz crawl). |
 
 ---
 
@@ -141,7 +158,7 @@ O LLM recebe o pet + a lista já filtrada e devolve só ids. As fontes da busca 
 - **`GuidelineChunk`**: parágrafo do markdown + vetor de 768 dimensões (cosine).
 - **`Source`**: título, URL e editora lidos do front-matter do `.md`.
 
-O seed apaga o grafo, recria os tratamentos, fatia cada documento em parágrafos (> 40 caracteres), pede embeddings ao Gemini (`gemini-embedding-001`, 768-d, L2) e cria o índice `guideline_index`.
+O seed (e `POST /v1/ingest`) **não apaga o grafo**. Faz upsert de `Treatment` por id e de `Source` por URL; só re-embeda o `.md` se o SHA-256 mudou. Cada documento vira parágrafos (> 40 caracteres) com embeddings Gemini (`gemini-embedding-001`, 768-d, L2) no índice `guideline_index`. Doc de raça invalida o cache daquela `raca`+`especie`; diretriz global apaga todo `CachedCarePlan`.
 
 ### Caminho de uma requisição
 
@@ -160,7 +177,7 @@ payload
   │       "cachorro da raça Labrador, 28.5kg, 3 anos, macho, não castrado. Diagnóstico: …"
   │     • Cypher: Treatments cuja espécie/idade/peso/castração batem com o pet
   │
-  ├─ 4. Busca vetorial: os 4 chunks mais próximos (cosine) + Source ligada
+  ├─ 4. Busca vetorial: os `VECTOR_K` chunks mais próximos (padrão 8, cosine) + Source ligada
   │
   ├─ 5. LLM (gemini-3.5-flash-lite, temperature 0, JSON schema)
   │     recebe o pet e o catálogo filtrado; responde {"ids":["v10","antirabica",…]}
@@ -192,6 +209,10 @@ A chave é um SHA-256 do perfil demográfico + nomes dos modelos. Dois Labradore
 ---
 
 ## Contrato da API
+
+`GET /health` — `{ ok, provider, chatModel, embedModel }`.
+
+`POST /v1/ingest` — body opcional `{ "force": true }`. Resposta: contagens `treatments` / `ingested` / `skipped` / `removed` / `chunksWritten`.
 
 `POST /v1/care-plan`
 
@@ -254,10 +275,10 @@ Erros úteis:
   - Gato SRD — [Cornell, cuidados com o gato](https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/feline-health-topics/choosing-and-caring-your-new-cat)
   - Dermatite atópica — [Merck Veterinary Manual](https://www.merckvetmanual.com/integumentary-system/atopic-dermatitis/atopic-dermatitis-in-animals)
 
-Para incluir um tratamento novo: acrescente uma linha no CSV (com id estável) e rode o seed de novo. Para incluir conhecimento novo: um `.md` em `api/data/docs/` com front-matter `fonte`, `url` e `editora`. O serviço `seed` monta `api/data` em `/app/data`; para reindexar sem rebuild da imagem:
+Para incluir um tratamento novo: acrescente uma linha no CSV (com id estável) e rode o ingest. Para incluir conhecimento novo: um `.md` em `api/data/docs/` com front-matter `fonte`, `url` e `editora` (veja `docs-template.md`). Os serviços **api** e **seed** montam `api/data` em `/app/data`. Com o stack no ar:
 
 ```bash
-docker compose up --force-recreate --no-deps seed
+curl -sf -X POST http://localhost:3000/v1/ingest
 ```
 
-(Ou `npm run seed` na pasta `api` se o stack já estiver no ar.)
+(Ou `docker compose up --force-recreate --no-deps seed`, ou `npm run seed` na pasta `api`.)

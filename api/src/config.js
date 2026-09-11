@@ -19,6 +19,6 @@ export const config = {
     textNodeProperty: "texto",
     embeddingNodeProperty: "embedding",
     dimensions: Number(process.env.EMBED_DIMENSIONS || 768),
-    k: 4,
+    k: Number(process.env.VECTOR_K || 8),
   },
 };
