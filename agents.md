@@ -1,6 +1,6 @@
 # Diretrizes para agentes — GraphRAG de plano de cuidados
 
-POC em pt-BR: `POST /v1/care-plan` devolve itens **somente** do catálogo `api/data/clinica-catalogo.csv`. O LLM escolhe ids; recorrência e duração saem do nó `Treatment`. Não invente tratamento, exame ou intervalo.
+POC em pt-BR: `POST /v1/care-plan` devolve itens **somente** do catálogo `api/data/clinica-catalogo.csv`. O LLM escolhe ids; recorrência e duração saem do nó `Treatment`. Não invente tratamento, exame ou intervalo. Depois do plano, `POST /v1/conversations` convida o tutor; respostas de procedimento também não inventam item fora do plano enviado.
 
 Stack: Express + Neo4j + Gemini (`gemini-3.5-flash-lite` + `gemini-embedding-001`, 768-d). Sem Ollama.
 
@@ -35,6 +35,10 @@ node scripts/harvest-allowlist.mjs
 ```
 
 `GEMINI_API_KEY` no `.env`. Compose: Neo4j + seed + API (sem Ollama). Porta 3000 / Browser 7474.
+
+## Convite de cuidados (chat)
+
+`POST /v1/conversations` recebe tutor + pet + plano do próximo mês (já fatiado). O modelo gera o convite em pt-BR; `intent` vira status (`invited` → `accepted` | `declined`). Perguntas usam os chunks GraphRAG e só falam dos itens do plano. Mensagens ficam em `Conversation`/`Message` (`providerMessageId` opcional). Canal HTTP agora; WhatsApp/Telegram depois.
 
 ## O que não fazer
 

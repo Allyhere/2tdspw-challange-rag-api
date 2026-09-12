@@ -40,7 +40,7 @@ function l2Normalize(values) {
   return values.map((value) => value / norm);
 }
 
-const IDS_SCHEMA = {
+export const IDS_SCHEMA = {
   type: "OBJECT",
   properties: {
     ids: { type: "ARRAY", items: { type: "STRING" } },
@@ -48,7 +48,12 @@ const IDS_SCHEMA = {
   required: ["ids"],
 };
 
-export async function geminiGenerateJson({ system, user }) {
+export async function geminiGenerateJson({
+  system,
+  user,
+  responseSchema = IDS_SCHEMA,
+  maxOutputTokens = 256,
+}) {
   const payload = await geminiFetch(
     endpoint(config.gemini.chatModel, "generateContent"),
     {
@@ -56,9 +61,9 @@ export async function geminiGenerateJson({ system, user }) {
       contents: [{ role: "user", parts: [{ text: user }] }],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 256,
+        maxOutputTokens,
         responseMimeType: "application/json",
-        responseSchema: IDS_SCHEMA,
+        responseSchema,
       },
     },
   );

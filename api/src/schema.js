@@ -48,14 +48,16 @@ export const llmCarePlanSchema = z.preprocess((value) => {
   ids: z.array(z.string()).default([]),
 }));
 
+export const carePlanItemSchema = z.object({
+  planItemName: z.string().min(1),
+  planRecurrency: z.enum(["single", "recurrent"]),
+  planRecurrencyRate: z.number().optional(),
+  planDurationInMonths: z.number(),
+});
+
 export const carePlanResponseSchema = z.object({
   carePlanDescription: z.string().min(1),
-  carePlan: z.array(z.object({
-    planItemName: z.string().min(1),
-    planRecurrency: z.enum(["single", "recurrent"]),
-    planRecurrencyRate: z.number().optional(),
-    planDurationInMonths: z.number(),
-  })).min(1),
+  carePlan: z.array(carePlanItemSchema).min(1),
   sources: z.array(
     z.object({
       title: z.string(),
@@ -63,4 +65,33 @@ export const carePlanResponseSchema = z.object({
       publisher: z.string().optional(),
     }),
   ),
+});
+
+export const conversationPetSchema = z.object({
+  name: z.string().min(1),
+  breed: z.string().min(1),
+  species: z.enum(["cachorro", "gato"]),
+  sex: z.enum(["macho", "femea"]).or(z.literal("")).optional(),
+  weight: z.number().positive().optional(),
+  age: z.number().min(0).optional(),
+});
+
+export const conversationIntakeSchema = z.object({
+  tutor: z.object({
+    name: z.string().min(1),
+    phone: z.string().min(1).optional(),
+  }),
+  pet: conversationPetSchema,
+  carePlan: z.array(carePlanItemSchema).min(1),
+  channel: z.enum(["api", "whatsapp", "telegram"]).default("api"),
+});
+
+export const inboundMessageSchema = z.object({
+  text: z.string().min(1),
+  providerMessageId: z.string().min(1).optional(),
+});
+
+export const llmTurnSchema = z.object({
+  reply: z.string().min(1),
+  intent: z.enum(["invite", "accept", "decline", "question", "other"]),
 });

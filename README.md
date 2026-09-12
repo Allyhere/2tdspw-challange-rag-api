@@ -52,7 +52,44 @@ Para validar os casos de raça (Labrador, Persa) e SRD (cão e gato) e recusar q
 sh scripts/request.sh
 ```
 
-### 4. Reindexar documentos
+### 4. Convidar o tutor (chat)
+
+Depois do plano, `POST /v1/conversations` gera o convite em tom de WhatsApp. O canal `"api"` devolve o texto no JSON (Twilio/Telegram entram depois no mesmo motor).
+
+```bash
+curl -sf -X POST http://localhost:3000/v1/conversations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tutor": { "name": "Ana" },
+    "pet": { "name": "Thor", "breed": "Labrador", "species": "cachorro" },
+    "carePlan": [
+      { "planItemName": "V10", "planRecurrency": "recurrent", "planRecurrencyRate": 12, "planDurationInMonths": 60 },
+      { "planItemName": "Antirrábica", "planRecurrency": "recurrent", "planRecurrencyRate": 12, "planDurationInMonths": 60 },
+      { "planItemName": "Exame de fezes", "planRecurrency": "recurrent", "planRecurrencyRate": 6, "planDurationInMonths": 12 }
+    ]
+  }'
+```
+
+Resposta: `{ "id", "status": "invited", "message": { "id", "role": "assistant", "text", "createdAt" } }`. Use o `id` nas próximas chamadas.
+
+```bash
+# pergunta sobre um procedimento (status continua invited)
+curl -sf -X POST http://localhost:3000/v1/conversations/<id>/messages \
+  -H "Content-Type: application/json" \
+  -d '{"text":"O que é a V10?"}'
+
+# aceite ou recusa
+curl -sf -X POST http://localhost:3000/v1/conversations/<id>/messages \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Pode sim"}'
+
+# thread persistida
+curl -sf http://localhost:3000/v1/conversations/<id>
+```
+
+`providerMessageId` no body da mensagem é opcional (MessageSid do Twilio, depois).
+
+### 5. Reindexar documentos
 
 `POST /v1/ingest` relê `api/data/docs/*.md` e o CSV **sem apagar o grafo**. Re-embeda só arquivos cujo SHA-256 mudou. Body vazio = incremental; `{ "force": true }` reindexa tudo.
 
@@ -66,7 +103,7 @@ Resposta: `{ "treatments", "ingested", "skipped", "removed", "chunksWritten" }`.
 
 Candidatos de URL (só imprime; não baixa página): `node scripts/harvest-allowlist.mjs`. Resuma no [`docs-template.md`](docs-template.md), aproveite, depois ingira.
 
-### 5. App mobile
+### 6. App mobile
 
 Defina `EXPO_PUBLIC_RAG_API_URL` (iOS Simulator: `http://localhost:3000`; emulador Android: `http://10.0.2.2:3000`). Depois de finalizar uma consulta, a tela de sucesso chama a API e a de tratamento mostra o plano e as fontes.
 
@@ -105,13 +142,15 @@ Três peças, cada uma com um papel claro:
                    │ 001 (768-d) │          │ GuidelineChunk  │
                    │ flash-lite  │          │ Source          │
                    └─────────────┘          │ CachedCarePlan  │
+                                            │ Conversation    │
+                                            │ Message         │
                                             └─────────────────┘
 ```
 
 | Serviço | Função |
 | --- | --- |
-| **api** | Recebe o JSON, valida, orquestra cache → retrieval → LLM → grounding. Também expõe `POST /v1/ingest`. |
-| **neo4j** | Grafo da clínica: tratamentos aplicáveis, chunks de diretriz com vetor, cache de planos. |
+| **api** | Recebe o JSON, valida, orquestra cache → retrieval → LLM → grounding. Expõe `POST /v1/ingest` e o chat de convite (`/v1/conversations`). |
+| **neo4j** | Grafo da clínica: tratamentos aplicáveis, chunks de diretriz com vetor, cache de planos, conversas e mensagens. |
 | **Gemini** | Embeddings (`gemini-embedding-001`, 768-d) e chat (`gemini-3.5-flash-lite`) com JSON schema. |
 | **seed** | Chama a mesma ingestão incremental (`runIngest`): upsert de tratamentos, re-embed só se o hash do `.md` mudou. Roda uma vez e sai. |
 
@@ -122,14 +161,17 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 | Caminho | Papel |
 | --- | --- |
 | `api/src/index.js` | Sobe o HTTP (listen / shutdown). |
-| `api/src/app.js` | Rotas: `/health`, `POST /v1/care-plan`, `POST /v1/ingest`. |
+| `api/src/app.js` | Rotas: `/health`, `POST /v1/care-plan`, `POST /v1/ingest`, `/v1/conversations`. |
 | `api/src/schema.js` | Validação Zod do payload e do JSON do modelo. |
+| `api/src/conversation.js` | Motor do convite: start / handleInbound / get; intent → status; RAG nas perguntas. |
+| `api/src/conversationStore.js` | Persistência `Conversation` + `Message` (Neo4j; memória nos testes). |
 | `api/src/rag.js` | Pipeline GraphRAG: query, embedding, LLM, grounding, descrição. |
 | `api/src/ingest.js` | Upsert CSV + docs: hash skip, chunks por `Source.url`, invalida cache. |
 | `api/src/neo4j.js` | Cypher: filtro de tratamentos, busca vetorial, cache (`breed`/`species`). |
 | `api/src/config.js` | URI, modelos Gemini, `VECTOR_K` (padrão 8, alvo 8–12). |
 | `api/src/gemini.js` | Cliente REST: generateContent (JSON schema) e batchEmbedContents. |
-| `api/prompts/carePlan.md` | Prompt do chat: “copie ids do catálogo”. |
+| `api/prompts/carePlan.md` | Prompt do plano: “copie ids do catálogo”. |
+| `api/prompts/careInvite.md` | Prompt do convite WhatsApp: reply + intent. |
 | `api/data/seed.js` | One-shot: espera Neo4j/Gemini e chama `runIngest`. |
 | `api/data/clinica-catalogo.csv` | Menu real da clínica (ficção). |
 | `api/data/docs/*.md` | Resumos em pt-BR com URL da fonte. |
@@ -152,11 +194,13 @@ O LLM recebe o pet + a lista já filtrada e devolve só ids. As fontes da busca 
 (:Treatment)                         catálogo da clínica (CSV)
 (:GuidelineChunk)-[:FROM]->(:Source) trechos + metadados da diretriz
 (:CachedCarePlan)                    plano já gerado para um perfil demográfico
+(:Message)-[:IN]->(:Conversation)    convite ao tutor e thread (providerMessageId opcional)
 ```
 
 - **`Treatment`**: id, nome, espécie, faixa de idade/peso, se é só para não castrado, recorrência e duração.
 - **`GuidelineChunk`**: parágrafo do markdown + vetor de 768 dimensões (cosine).
 - **`Source`**: título, URL e editora lidos do front-matter do `.md`.
+- **`Conversation` / `Message`**: convite persistido (tutor, pet, plano do mês, status) e a thread. `providerMessageId` fica vazio no canal `api`.
 
 O seed (e `POST /v1/ingest`) **não apaga o grafo**. Faz upsert de `Treatment` por id e de `Source` por URL; só re-embeda o `.md` se o SHA-256 mudou. Cada documento vira parágrafos (> 40 caracteres) com embeddings Gemini (`gemini-embedding-001`, 768-d, L2) no índice `guideline_index`. Doc de raça invalida o cache daquela `raca`+`especie`; diretriz global apaga todo `CachedCarePlan`.
 
@@ -259,6 +303,18 @@ Erros úteis:
 | --- | --- |
 | **400** | Payload inválido (Zod). |
 | **502** | Nenhum item do catálogo se aplica, ou falha ao gerar o plano. |
+
+`POST /v1/conversations` — tutor (`name`, `phone` opcional), pet (`name`, `breed`, `species`, …), `carePlan` já fatiado para o próximo mês, `channel` opcional (`api` | `whatsapp` | `telegram`, padrão `api`). Resposta: `{ id, status: "invited", message }`.
+
+`POST /v1/conversations/:id/messages` — `{ "text", "providerMessageId?" }`. Resposta: `{ id, status, message }`. Status: `invited` → `accepted` | `declined`. Perguntas sobre os procedimentos do plano ficam em `invited` e usam os chunks GraphRAG.
+
+`GET /v1/conversations/:id` — snapshot (tutor, pet, plano) e a thread em ordem.
+
+| HTTP | Quando |
+| --- | --- |
+| **400** | Payload inválido (Zod). |
+| **404** | Conversa inexistente. |
+| **502** | Falha ao gerar o turno (Gemini). |
 
 ---
 
