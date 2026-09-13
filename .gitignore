@@ -1,5 +1,6 @@
 node_modules/
 .env
+Neo4j-*.txt
 *.log
 .DS_Store
 api/.npm-prefix/
