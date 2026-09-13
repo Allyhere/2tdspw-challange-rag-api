@@ -17,8 +17,8 @@ services:
 
   seed:
     build:
-      context: ./api
-      dockerfile: ../Dockerfile
+      context: .
+      dockerfile: Dockerfile
     depends_on:
       neo4j:
         condition: service_healthy
@@ -37,8 +37,8 @@ services:
 
   api:
     build:
-      context: ./api
-      dockerfile: ../Dockerfile
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     env_file:
