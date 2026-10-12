@@ -12,9 +12,23 @@ function endpoint(model, method) {
   return `${config.gemini.baseUrl}/models/${encodeURIComponent(model)}:${method}`;
 }
 
-async function geminiFetch(url, body) {
-  requireKey();
-  const response = await fetch(url, {
+function retryDelayMs(response) {
+  const header = response.headers?.get?.("retry-after");
+  if (header == null || header === "") return 250;
+  const seconds = Number(header);
+  const waitMs = Number.isFinite(seconds)
+    ? seconds * 1000
+    : Date.parse(header) - Date.now();
+  if (!Number.isFinite(waitMs)) return 250;
+  return Math.min(Math.max(0, waitMs), 2000);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postGemini(url, body) {
+  return fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -22,6 +36,15 @@ async function geminiFetch(url, body) {
     },
     body: JSON.stringify(body),
   });
+}
+
+async function geminiFetch(url, body) {
+  requireKey();
+  let response = await postGemini(url, body);
+  if (response.status === 429 || response.status === 503) {
+    await delay(retryDelayMs(response));
+    response = await postGemini(url, body);
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message =

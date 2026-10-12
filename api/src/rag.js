@@ -265,13 +265,29 @@ export function formatServerTiming(timings) {
     .join(", ");
 }
 
-export async function generateCarePlan(pet) {
+function emptyCatalogError() {
+  const error = new Error("Nenhum item do catálogo se aplica a este pet");
+  error.status = 502;
+  return error;
+}
+
+export async function generateCarePlan(pet, deps = {}) {
+  const embed =
+    deps.embed ?? ((query) => geminiEmbed([query], "RETRIEVAL_QUERY"));
+  const findTreatments = deps.findTreatments ?? findTreatmentsForPet;
+  const searchChunks = deps.searchChunks ?? searchGuidelineChunks;
+  const generate = deps.generate ?? invokeModel;
+  const readCache = deps.readCache ?? getCachedCarePlan;
+  const writeCache = deps.writeCache ?? saveCachedCarePlan;
+  const verify =
+    deps.verify ?? (() => getDriver().verifyConnectivity());
+
   const totalStart = performance.now();
   const timings = emptyTimings();
   const skipCache = hasConsultaContext(pet);
 
   const cacheStart = performance.now();
-  const cached = skipCache ? null : await getCachedCarePlan(pet);
+  const cached = skipCache ? null : await readCache(pet);
   timings.cache = roundMs(performance.now() - cacheStart);
   if (cached?.carePlan) {
     timings.cacheStatus = "hit";
@@ -293,26 +309,41 @@ export async function generateCarePlan(pet) {
   const query = buildPetQuery(pet);
   const embedStart = performance.now();
   const catalogStart = performance.now();
-  const [[embedding], catalog] = await Promise.all([
-    geminiEmbed([query], "RETRIEVAL_QUERY"),
-    findTreatmentsForPet(pet),
-  ]);
+  const catalogPromise = findTreatments(pet);
+  let embedding;
+  try {
+    const vectors = await embed(query);
+    embedding = vectors[0];
+  } catch (error) {
+    console.warn("Embedding falhou, usando só o catálogo:", error.message);
+    const catalog = await catalogPromise;
+    timings.embed = roundMs(performance.now() - embedStart);
+    timings.catalog = roundMs(performance.now() - catalogStart);
+    if (!catalog?.length) throw emptyCatalogError();
+    const carePlan = catalogAsPlan(catalog);
+    timings.total = roundMs(performance.now() - totalStart);
+    return {
+      plan: {
+        carePlanDescription: fallbackDescription(pet, carePlan),
+        carePlan,
+        sources: [],
+      },
+      timings,
+    };
+  }
+  const catalog = await catalogPromise;
   timings.embed = roundMs(performance.now() - embedStart);
   timings.catalog = roundMs(performance.now() - catalogStart);
-  if (catalog.length === 0) {
-    const error = new Error("Nenhum item do catálogo se aplica a este pet");
-    error.status = 502;
-    throw error;
-  }
+  if (catalog.length === 0) throw emptyCatalogError();
 
   const vectorStart = performance.now();
-  const chunks = await searchGuidelineChunks(embedding);
+  const chunks = await searchChunks(embedding);
   timings.vector = roundMs(performance.now() - vectorStart);
 
   let ids = [];
   const llmStart = performance.now();
   try {
-    const generated = await invokeModel(pet, catalog);
+    const generated = await generate(pet, catalog);
     ids = generated.ids ?? [];
   } catch (error) {
     console.warn("LLM falhou, usando só o catálogo:", error.message);
@@ -331,7 +362,7 @@ export async function generateCarePlan(pet) {
 
   const postStart = performance.now();
   try {
-    await getDriver().verifyConnectivity();
+    await verify();
   } catch (error) {
     console.warn("Neo4j reconnect:", error.message);
   }
@@ -341,7 +372,7 @@ export async function generateCarePlan(pet) {
     sources: uniqueSources(chunks),
   };
   if (!skipCache) {
-    await saveCachedCarePlan(pet, {
+    await writeCache(pet, {
       carePlan: plan.carePlan,
       sources: plan.sources,
     });

@@ -54,7 +54,7 @@ sh scripts/request.sh
 
 ### 4. Convidar o tutor (chat)
 
-Depois do plano, `POST /v1/conversations` gera o convite em tom de WhatsApp. O canal `"api"` devolve o texto no JSON (Twilio/Telegram entram depois no mesmo motor).
+Depois do plano, `POST /v1/conversations` monta o convite com o nome do tutor, o pet e os procedimentos do plano. O canal `"api"` devolve o texto no JSON (Twilio/Telegram entram depois no mesmo motor).
 
 ```bash
 curl -sf -X POST http://localhost:3000/v1/conversations \
@@ -163,7 +163,7 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 | `api/src/index.js` | Sobe o HTTP (listen / shutdown). |
 | `api/src/app.js` | Rotas: `/health`, `POST /v1/care-plan`, `POST /v1/ingest`, `/v1/conversations`. |
 | `api/src/schema.js` | Validação Zod do payload e do JSON do modelo. |
-| `api/src/conversation.js` | Motor do convite: start / handleInbound / get; intent → status; RAG nas perguntas. |
+| `api/src/conversation.js` | Convite sem modelo; `decline` sai de `invited`; `accept` não agenda; RAG nas perguntas. |
 | `api/src/conversationStore.js` | Persistência `Conversation` + `Message` (Neo4j; memória nos testes). |
 | `api/src/rag.js` | Pipeline GraphRAG: query, embedding, LLM, grounding, descrição. |
 | `api/src/ingest.js` | Upsert CSV + docs: hash skip, chunks por `Source.url`, invalida cache. |
@@ -306,7 +306,7 @@ Erros úteis:
 
 `POST /v1/conversations` — tutor (`name`, `phone` opcional), pet (`name`, `breed`, `species`, …), `carePlan` já fatiado para o próximo mês, `channel` opcional (`api` | `whatsapp` | `telegram`, padrão `api`). Resposta: `{ id, status: "invited", message }`.
 
-`POST /v1/conversations/:id/messages` — `{ "text", "providerMessageId?" }`. Resposta: `{ id, status, message }`. Status: `invited` → `accepted` | `declined`. Perguntas sobre os procedimentos do plano ficam em `invited` e usam os chunks GraphRAG.
+`POST /v1/conversations/:id/messages` — `{ "text", "providerMessageId?" }`. Resposta: `{ id, status, message }`. O status fica `invited` até um `decline` do modelo. `accept` não agenda e não vira `accepted`. Perguntas sobre os procedimentos do plano usam os chunks GraphRAG. Depois de `declined`, uma pergunta ainda é respondida e o status não volta.
 
 `GET /v1/conversations/:id` — snapshot (tutor, pet, plano) e a thread em ordem.
 

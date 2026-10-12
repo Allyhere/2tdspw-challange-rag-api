@@ -16,6 +16,7 @@ let driver;
 
 export function getDriver() {
   if (!driver) {
+    console.log(`Neo4j driver ${config.neo4j.uri.replace(/\/\/.*@/, "//")}`);
     driver = neo4j.driver(
       config.neo4j.uri,
       neo4j.auth.basic(config.neo4j.user, config.neo4j.password),
@@ -69,6 +70,34 @@ export async function findTreatmentsForPet(pet) {
         intervaloMeses: toJsNumber(t.intervaloMeses),
         duracaoPadraoMeses: toJsNumber(t.duracaoPadraoMeses),
         somenteNaoCastrado: t.somenteNaoCastrado,
+      };
+    });
+  } finally {
+    await session.close();
+  }
+}
+
+export async function findTreatmentsByNames(names) {
+  if (!names?.length) return [];
+  const session = getDriver().session();
+  try {
+    const result = await session.run(
+      `
+      UNWIND $names AS nome
+      MATCH (t:Treatment {nome: nome})
+      RETURN t
+      `,
+      { names },
+    );
+    return result.records.map((record) => {
+      const t = record.get("t").properties;
+      return {
+        id: t.id,
+        nome: t.nome,
+        tipo: t.tipo,
+        recorrencia: t.recorrencia,
+        intervaloMeses: toJsNumber(t.intervaloMeses),
+        duracaoPadraoMeses: toJsNumber(t.duracaoPadraoMeses),
       };
     });
   } finally {

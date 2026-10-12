@@ -38,7 +38,7 @@ node scripts/harvest-allowlist.mjs
 
 ## Convite de cuidados (chat)
 
-`POST /v1/conversations` recebe tutor + pet + plano do próximo mês (já fatiado). O modelo gera o convite em pt-BR; `intent` vira status (`invited` → `accepted` | `declined`). Perguntas usam os chunks GraphRAG e só falam dos itens do plano. Mensagens ficam em `Conversation`/`Message` (`providerMessageId` opcional). Canal HTTP agora; WhatsApp/Telegram depois.
+`POST /v1/conversations` recebe tutor + pet + plano do próximo mês (já fatiado) e monta o convite sem o modelo. O status fica `invited` até um `decline` do modelo. `accept` não agenda e não vira `accepted`. Perguntas usam os chunks GraphRAG e só falam dos itens do plano. Mensagens ficam em `Conversation`/`Message` (`providerMessageId` opcional). Canal HTTP agora; WhatsApp/Telegram depois.
 
 ## O que não fazer
 

@@ -3,12 +3,18 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { geminiEmbed, geminiGenerateJson } from "./gemini.js";
-import { searchGuidelineChunks } from "./neo4j.js";
+import { findTreatmentsByNames, searchGuidelineChunks } from "./neo4j.js";
 import { llmTurnSchema } from "./schema.js";
 import { createNeo4jConversationStore } from "./conversationStore.js";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const promptTemplate = readFileSync(join(rootDir, "prompts/careInvite.md"), "utf8");
+const catalogNomes = readFileSync(join(rootDir, "data/clinica-catalogo.csv"), "utf8")
+  .trim()
+  .split(/\r?\n/)
+  .slice(1)
+  .map((line) => line.split(",")[1])
+  .filter(Boolean);
 
 export const TURN_SCHEMA = {
   type: "OBJECT",
@@ -63,12 +69,45 @@ function formatChunks(chunks) {
     .join("\n");
 }
 
+function normalizeName(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function planNames(carePlan) {
+  return (carePlan ?? []).map((item) => item.planItemName).filter(Boolean);
+}
+
+function replyNamesOffPlan(reply, carePlan) {
+  const haystack = ` ${normalizeName(reply)} `;
+  const allowed = new Set(planNames(carePlan).map(normalizeName));
+  return catalogNomes.some((nome) => {
+    const name = normalizeName(nome);
+    if (!name || allowed.has(name)) return false;
+    return haystack.includes(` ${name} `);
+  });
+}
+
+function treatmentsFromPlan(carePlan) {
+  return (carePlan ?? []).map((item) => ({
+    nome: item.planItemName,
+    recorrencia: item.planRecurrency,
+    intervaloMeses: item.planRecurrencyRate ?? null,
+    duracaoPadraoMeses: item.planDurationInMonths,
+  }));
+}
+
 function fillPrompt(context) {
   const intake = context.intake;
   return promptTemplate
     .replace("{tutor}", JSON.stringify(intake.tutor, null, 2))
     .replace("{pet}", JSON.stringify(intake.pet, null, 2))
     .replace("{carePlan}", JSON.stringify(intake.carePlan, null, 2))
+    .replace("{treatments}", JSON.stringify(context.treatments ?? [], null, 2))
     .replace("{status}", context.status ?? "invited")
     .replace("{history}", formatHistory(context.history))
     .replace("{inbound}", context.inboundText?.trim() || "(convite inicial)")
@@ -89,6 +128,10 @@ export async function defaultGenerateTurn(context) {
 export async function defaultRetrieveChunks(text) {
   const [embedding] = await geminiEmbed([text], "RETRIEVAL_QUERY");
   return searchGuidelineChunks(embedding);
+}
+
+export async function defaultLoadTreatments(names) {
+  return findTreatmentsByNames(names);
 }
 
 function toPublicMessage(message) {
@@ -128,7 +171,6 @@ function notFound() {
 
 function nextStatus(current, intent) {
   if (current !== "invited") return current;
-  if (intent === "accept") return "accepted";
   if (intent === "decline") return "declined";
   return current;
 }
@@ -137,16 +179,12 @@ export function createConversations({
   store,
   generateTurn = defaultGenerateTurn,
   retrieveChunks = defaultRetrieveChunks,
+  loadTreatments = defaultLoadTreatments,
 } = {}) {
   const conversationStore = store ?? createNeo4jConversationStore();
 
   async function start(intake) {
-    const turn = await generateTurn({
-      kind: "invite",
-      intake,
-      status: "invited",
-      history: [],
-    });
+    const names = planNames(intake.carePlan).join(", ");
     const conversation = await conversationStore.create({
       tutor: intake.tutor,
       pet: intake.pet,
@@ -156,7 +194,7 @@ export function createConversations({
     });
     const message = await conversationStore.appendMessage(conversation.id, {
       role: "assistant",
-      body: turn.reply,
+      body: `Oi ${intake.tutor.name}! Cuidados do ${intake.pet.name} no próximo mês: ${names}.`,
       channel: conversation.channel,
     });
     return {
@@ -178,29 +216,64 @@ export function createConversations({
     });
 
     const withUser = await conversationStore.get(conversationId);
-    const chunks = await retrieveChunks(text);
-    const turn = await generateTurn({
-      kind: "reply",
-      intake: {
-        tutor: existing.tutor,
-        pet: existing.pet,
-        carePlan: existing.carePlan,
-        channel: existing.channel,
-      },
-      status: existing.status,
-      history: withUser.messages,
-      inboundText: text,
-      chunks,
-    });
+    let treatments = null;
+    try {
+      treatments = await loadTreatments(planNames(existing.carePlan));
+    } catch (error) {
+      console.warn("Tratamentos do plano indisponíveis:", error.message);
+    }
+    const rows = treatments?.length
+      ? treatments
+      : treatmentsFromPlan(existing.carePlan);
 
-    const status = nextStatus(existing.status, turn.intent);
+    let chunks = [];
+    try {
+      chunks = (await retrieveChunks(text)) ?? [];
+    } catch (error) {
+      console.warn("Busca de diretriz falhou:", error.message);
+      chunks = [];
+    }
+
+    const names = planNames(existing.carePlan).join(", ");
+    let reply;
+    let intent;
+    try {
+      const turn = await generateTurn({
+        kind: "reply",
+        intake: {
+          tutor: existing.tutor,
+          pet: existing.pet,
+          carePlan: existing.carePlan,
+          channel: existing.channel,
+        },
+        status: existing.status,
+        history: withUser.messages,
+        inboundText: text,
+        chunks,
+        treatments: rows,
+      });
+      reply = turn.reply;
+      intent = turn.intent;
+    } catch (error) {
+      console.warn("Chat falhou, respondendo com o plano:", error.message);
+      reply = `${names}. Este chat não agenda horário. A clínica confirma o dia.`;
+      intent = null;
+    }
+
+    if (intent === "accept") {
+      reply = `${names}. Este chat não agenda horário. A clínica confirma o dia.`;
+    } else if (intent && replyNamesOffPlan(reply, existing.carePlan)) {
+      reply = `Os cuidados deste plano são ${names}. Qualquer outro a clínica precisa confirmar.`;
+    }
+
+    const status = nextStatus(existing.status, intent);
     if (status !== existing.status) {
       await conversationStore.updateStatus(conversationId, status);
     }
 
     const message = await conversationStore.appendMessage(conversationId, {
       role: "assistant",
-      body: turn.reply,
+      body: reply,
       channel: existing.channel,
     });
     return {
