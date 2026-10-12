@@ -109,7 +109,7 @@ export const conversationStatusSchema = z.enum([
 
 export const publicMessageSchema = z.object({
   id: z.string(),
-  role: z.enum(["assistant", "user"]),
+  role: z.enum(["assistant", "user", "vet"]),
   text: z.string(),
   createdAt: z.string().datetime({ offset: true }),
   providerMessageId: z.string().optional(),
@@ -124,6 +124,7 @@ export const conversationStartResponseSchema = z.object({
 export const conversationResponseSchema = z.object({
   id: z.string(),
   status: conversationStatusSchema,
+  agentEnabled: z.boolean(),
   channel: z.enum(["api", "whatsapp", "telegram"]),
   tutor: conversationIntakeSchema.shape.tutor,
   pet: conversationPetSchema,
@@ -136,6 +137,7 @@ export const conversationResponseSchema = z.object({
 export const conversationSummarySchema = z.object({
   id: z.string(),
   status: conversationStatusSchema,
+  agentEnabled: z.boolean(),
   channel: z.enum(["api", "whatsapp", "telegram"]),
   tutor: conversationIntakeSchema.shape.tutor,
   pet: conversationPetSchema,

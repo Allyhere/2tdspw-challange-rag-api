@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createApp } from "./app.js";
+import { createConversations } from "./conversation.js";
+import { createMemoryConversationStore } from "./conversationStore.js";
 import { createRateLimiter } from "./rateLimit.js";
 
 const SUMMARY = {
@@ -511,5 +513,66 @@ test("conversation rate limit returns retry-after", async () => {
     });
     assert.equal(response.status, 429);
     assert.ok(response.headers.get("retry-after"));
+  });
+});
+
+test("POST /v1/conversations/:id/vet-messages rejects a tutor and an unknown conversation", async () => {
+  const app = createApp({
+    conversations: createConversations({
+      store: createMemoryConversationStore(),
+      generateTurn: async () => ({ reply: "ok", intent: "other" }),
+      retrieveChunks: async () => [],
+      loadTreatments: async () => [],
+    }),
+    identityService: fakeIdentityService(),
+  });
+
+  await withServer(app, async (base) => {
+    const created = await fetch(`${base}/v1/conversations`, {
+      method: "POST",
+      headers: headers("vet-token", true),
+      body: JSON.stringify(INTAKE),
+    });
+    const { id } = await created.json();
+    const tutorOnVetRoute = await fetch(`${base}/v1/conversations/${id}/vet-messages`, {
+      method: "POST",
+      headers: headers("owner-token", true),
+      body: JSON.stringify({ text: "oi", idempotencyKey: "tutor-vet-route" }),
+    });
+    assert.equal(tutorOnVetRoute.status, 403);
+
+    const missing = await fetch(`${base}/v1/conversations/missing/vet-messages`, {
+      method: "POST",
+      headers: headers("vet-token", true),
+      body: JSON.stringify({ text: "oi", idempotencyKey: "vet-missing-route" }),
+    });
+    assert.equal(missing.status, 404);
+  });
+});
+
+test("POST /v1/conversations/:id/messages rejects a vet token", async () => {
+  const app = createApp({
+    conversations: createConversations({
+      store: createMemoryConversationStore(),
+      generateTurn: async () => ({ reply: "ok", intent: "other" }),
+      retrieveChunks: async () => [],
+      loadTreatments: async () => [],
+    }),
+    identityService: fakeIdentityService(),
+  });
+
+  await withServer(app, async (base) => {
+    const created = await fetch(`${base}/v1/conversations`, {
+      method: "POST",
+      headers: headers("vet-token", true),
+      body: JSON.stringify(INTAKE),
+    });
+    const { id } = await created.json();
+    const response = await fetch(`${base}/v1/conversations/${id}/messages`, {
+      method: "POST",
+      headers: headers("vet-token", true),
+      body: JSON.stringify({ text: "oi", idempotencyKey: "vet-tutor-route" }),
+    });
+    assert.equal(response.status, 403);
   });
 });

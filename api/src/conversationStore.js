@@ -15,6 +15,7 @@ function nowIso() {
 export function createMemoryConversationStore() {
   const conversations = new Map();
   const conversationKeys = new Map();
+  const webhooks = [];
 
   return {
     async create({
@@ -49,6 +50,7 @@ export function createMemoryConversationStore() {
         tutor,
         pet,
         carePlan,
+        agentEnabled: true,
         createdAt,
         updatedAt: createdAt,
         messages: [],
@@ -86,7 +88,15 @@ export function createMemoryConversationStore() {
 
     async appendMessage(
       conversationId,
-      { role, body, channel, providerMessageId, dedupeKey },
+      {
+        role,
+        body,
+        channel,
+        providerMessageId,
+        dedupeKey,
+        disableAgent = false,
+        webhook = null,
+      },
     ) {
       const conversation = conversations.get(conversationId);
       if (!conversation) return null;
@@ -107,7 +117,51 @@ export function createMemoryConversationStore() {
       };
       conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
+      if (disableAgent) conversation.agentEnabled = false;
+      if (webhook) {
+        webhooks.push({
+          id: randomUUID(),
+          messageId: message.id,
+          conversationId,
+          body: {
+            vetFirebaseUid: webhook.vetFirebaseUid,
+            conversationId,
+            tutorName: webhook.tutorName,
+            petName: webhook.petName,
+            text: webhook.text,
+            messageId: message.id,
+          },
+          status: "pending",
+          attempts: 0,
+          nextAttemptAt: nowIso(),
+        });
+      }
       return { message: structuredClone(message), created: true };
+    },
+
+    async listDueWebhooks(now, limit = 20) {
+      return webhooks
+        .filter(
+          (job) => job.status === "pending" && job.nextAttemptAt <= now,
+        )
+        .slice(0, limit)
+        .map((job) => structuredClone(job));
+    },
+
+    async markWebhookDelivered(id) {
+      const job = webhooks.find((item) => item.id === id);
+      if (!job) return false;
+      job.status = "delivered";
+      return true;
+    },
+
+    async deferWebhook(id, nextAttemptAt, attempts) {
+      const job = webhooks.find((item) => item.id === id);
+      if (!job) return false;
+      job.status = "pending";
+      job.nextAttemptAt = nextAttemptAt;
+      job.attempts = attempts;
+      return true;
     },
 
     async acquireTurn(conversationId, turnKey) {
@@ -162,7 +216,21 @@ async function ensureConversationConstraint(session) {
     CREATE INDEX conversation_vet_updated IF NOT EXISTS
     FOR (c:Conversation) ON (c.vetFirebaseUid, c.updatedAt)
   `);
+  await session.run(`
+    CREATE CONSTRAINT chat_webhook_message IF NOT EXISTS
+    FOR (w:ChatWebhook) REQUIRE w.messageId IS UNIQUE
+  `);
+  await session.run(`
+    CREATE INDEX chat_webhook_due IF NOT EXISTS
+    FOR (w:ChatWebhook) ON (w.status, w.nextAttemptAt)
+  `);
   conversationConstraintReady = true;
+}
+
+function toNumber(value) {
+  if (value == null) return 0;
+  if (typeof value.toNumber === "function") return value.toNumber();
+  return Number(value);
 }
 
 function toIso(value) {
@@ -186,6 +254,7 @@ function conversationFromNode(node, messages = []) {
     tutor: JSON.parse(props.tutorJson),
     pet: JSON.parse(props.petJson),
     carePlan: JSON.parse(props.carePlanJson),
+    agentEnabled: props.agentEnabled !== false,
     createdAt: toIso(props.createdAt),
     updatedAt: toIso(props.updatedAt),
     messages,
@@ -254,6 +323,7 @@ export function createNeo4jConversationStore({ getSession } = {}) {
             c.tutorJson = $tutorJson,
             c.petJson = $petJson,
             c.carePlanJson = $carePlanJson,
+            c.agentEnabled = true,
             c.createdAt = datetime(),
             c.updatedAt = datetime(),
             c.createToken = $createToken
@@ -349,10 +419,29 @@ export function createNeo4jConversationStore({ getSession } = {}) {
 
     async appendMessage(
       conversationId,
-      { role, body, channel, providerMessageId, dedupeKey },
+      {
+        role,
+        body,
+        channel,
+        providerMessageId,
+        dedupeKey,
+        disableAgent = false,
+        webhook = null,
+      },
     ) {
       const id = randomUUID();
       const createToken = randomUUID();
+      const webhookId = randomUUID();
+      const webhookBody = webhook
+        ? {
+            vetFirebaseUid: webhook.vetFirebaseUid,
+            conversationId,
+            tutorName: webhook.tutorName,
+            petName: webhook.petName,
+            text: webhook.text,
+            messageId: id,
+          }
+        : null;
       return withSession(async (session) => {
         const result = await session.run(
           `
@@ -371,6 +460,19 @@ export function createNeo4jConversationStore({ getSession } = {}) {
           FOREACH (_ IN CASE WHEN created THEN [1] ELSE [] END |
             SET c.updatedAt = m.createdAt
           )
+          FOREACH (_ IN CASE WHEN created AND $disableAgent THEN [1] ELSE [] END |
+            SET c.agentEnabled = false
+          )
+          FOREACH (_ IN CASE WHEN created AND $hasWebhook THEN [1] ELSE [] END |
+            MERGE (w:ChatWebhook {messageId: m.id})
+            ON CREATE SET
+              w.id = $webhookId,
+              w.conversationId = c.id,
+              w.bodyJson = $webhookBody,
+              w.status = 'pending',
+              w.attempts = 0,
+              w.nextAttemptAt = datetime()
+          )
           REMOVE m.createToken
           RETURN m, created
           `,
@@ -383,6 +485,10 @@ export function createNeo4jConversationStore({ getSession } = {}) {
             body,
             channel: channel ?? "api",
             providerMessageId: providerMessageId ?? null,
+            disableAgent,
+            hasWebhook: Boolean(webhookBody),
+            webhookId,
+            webhookBody: webhookBody ? JSON.stringify(webhookBody) : null,
           },
         );
         const record = result.records[0];
@@ -443,6 +549,63 @@ export function createNeo4jConversationStore({ getSession } = {}) {
           .filter((node) => node?.properties?.id)
           .map(messageFromNode);
         return conversationFromNode(record.get("c"), messages);
+      });
+    },
+
+    async listDueWebhooks(now, limit = 20) {
+      return withSession(async (session) => {
+        const result = await session.run(
+          `
+          MATCH (w:ChatWebhook)
+          WHERE w.status = 'pending' AND w.nextAttemptAt <= datetime($now)
+          RETURN w
+          ORDER BY w.nextAttemptAt, w.id
+          LIMIT $limit
+          `,
+          { now, limit: neo4j.int(limit) },
+        );
+        return result.records.map((record) => {
+          const props = record.get("w").properties;
+          return {
+            id: props.id,
+            messageId: props.messageId,
+            conversationId: props.conversationId,
+            body: JSON.parse(props.bodyJson),
+            status: props.status,
+            attempts: toNumber(props.attempts),
+            nextAttemptAt: toIso(props.nextAttemptAt),
+          };
+        });
+      });
+    },
+
+    async markWebhookDelivered(id) {
+      return withSession(async (session) => {
+        const result = await session.run(
+          `
+          MATCH (w:ChatWebhook {id: $id})
+          SET w.status = 'delivered', w.deliveredAt = datetime()
+          RETURN w.id AS id
+          `,
+          { id },
+        );
+        return result.records.length === 1;
+      });
+    },
+
+    async deferWebhook(id, nextAttemptAt, attempts) {
+      return withSession(async (session) => {
+        const result = await session.run(
+          `
+          MATCH (w:ChatWebhook {id: $id})
+          SET w.status = 'pending',
+              w.nextAttemptAt = datetime($nextAttemptAt),
+              w.attempts = $attempts
+          RETURN w.id AS id
+          `,
+          { id, nextAttemptAt, attempts: neo4j.int(attempts) },
+        );
+        return result.records.length === 1;
       });
     },
   };

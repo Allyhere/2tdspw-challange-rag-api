@@ -94,12 +94,18 @@ curl -sf -X POST http://localhost:3000/v1/conversations/<id>/messages \
   -H "Content-Type: application/json" \
   -d '{"text":"Pode sim","idempotencyKey":"web-018f4f1b"}'
 
+# veterinário assume a conversa; o agente deixa de responder
+curl -sf -X POST http://localhost:3000/v1/conversations/<id>/vet-messages \
+  -H "Authorization: Bearer $VET_FIREBASE_ID_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Olá, aqui é a clínica.","idempotencyKey":"vet-018f4f1c"}'
+
 # thread persistida
 curl -sf http://localhost:3000/v1/conversations/<id> \
   -H "Authorization: Bearer $OWNER_FIREBASE_ID_TOKEN"
 ```
 
-O `idempotencyKey` evita mensagens duplicadas em retries. `providerMessageId` continua opcional para um futuro adaptador.
+O `idempotencyKey` evita mensagens duplicadas em retries. `providerMessageId` continua opcional para um futuro adaptador. A primeira mensagem do vet grava `role: "vet"` e passa `agentEnabled` para `false`. Enquanto o agente está desligado, a mensagem do tutor é gravada e não chama o modelo. Cada mensagem nova do tutor dispara um aviso à API Nest em segundo plano (`NEST_CHAT_WEBHOOK_URL`); a resposta HTTP do tutor não espera esse POST.
 
 ### 5. Reindexar documentos
 
@@ -319,11 +325,13 @@ Erros úteis:
 
 `POST /v1/conversations` — somente vet Firebase (login por e-mail). Recebe tutor (`name`, `phone` E.164 obrigatório), pet com `id`, e um `planStep` com id estável e os dados exatos do item do plano. O telefone é resolvido pelo Firebase Admin; telefone sem cadastro retorna `404`. Repetir vet+tutor+pet+etapa devolve a mesma conversa.
 
-`GET /v1/conversations?limit=20&cursor=…` — caixa de entrada do Firebase UID autenticado, ordenada por `updatedAt` decrescente. Cada item traz `lastMessage`; `nextCursor` pagina sem `SKIP`.
+`GET /v1/conversations?limit=20&cursor=…` — caixa de entrada do Firebase UID autenticado, ordenada por `updatedAt` decrescente. Cada item traz `agentEnabled` e `lastMessage`; `nextCursor` pagina sem `SKIP`.
 
-`POST /v1/conversations/:id/messages` — somente o tutor dono da conversa. Recebe `{ "text", "idempotencyKey", "providerMessageId?" }`. Resposta: `{ id, status, message }`. `accept` vira `accepted`, `decline` vira `declined`; o chat não agenda horário. Perguntas usam GraphRAG e não podem incluir tratamentos fora daquela etapa.
+`POST /v1/conversations/:id/messages` — somente o tutor dono da conversa. Token de vet recebe `403`. Recebe `{ "text", "idempotencyKey", "providerMessageId?" }`. Resposta: `{ id, status, message }`. Com `agentEnabled`, `accept` vira `accepted`, `decline` vira `declined`; o chat não agenda horário. Perguntas usam GraphRAG e não podem incluir tratamentos fora daquela etapa. Com o agente desligado, a resposta devolve a mensagem gravada do tutor e não chama o modelo.
 
-`GET /v1/conversations/:id` — snapshot e thread em ordem, apenas para o vet ou tutor vinculados.
+`POST /v1/conversations/:id/vet-messages` — somente o vet vinculado. Token de tutor recebe `403`. O body é o mesmo `InboundMessage`. A mensagem fica com `role: "vet"`, a primeira desliga o agente (`agentEnabled: false`) e nenhuma chama o modelo. Repetir `idempotencyKey` devolve a mensagem original.
+
+`GET /v1/conversations/:id` — snapshot e thread em ordem, apenas para o vet ou tutor vinculados. Inclui `agentEnabled`.
 
 | HTTP | Quando |
 | --- | --- |
@@ -388,7 +396,7 @@ A região é **Chile Central**. A assinatura de estudante aceita Chile Central, 
 
 O app tem 0,5 vCPU, 1 GiB, regra HTTP de 10 requisições concorrentes e no máximo 1 réplica. `minReplicas=0` pausa o processo: a URL fica, e a primeira chamada depois da pausa espera o container subir. `minReplicas=1` deixa uma réplica ligada o dia da aula.
 
-`GEMINI_API_KEY`, `NEO4J_PASSWORD`, `FIREBASE_PRIVATE_KEY` e `GHCR_TOKEN` são parâmetros seguros. `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` e `CORS_ORIGINS` também precisam estar no ambiente. O arquivo de parâmetros não guarda segredos. O Container App autentica o pull no GHCR mesmo com o pacote público. `GHCR_TOKEN` é um personal access token clássico com o escopo `read:packages`.
+`GEMINI_API_KEY`, `NEO4J_PASSWORD`, `FIREBASE_PRIVATE_KEY` e `GHCR_TOKEN` são parâmetros seguros. `NEST_CHAT_WEBHOOK_SECRET` também, quando `NEST_CHAT_WEBHOOK_URL` está definido. `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` e `CORS_ORIGINS` também precisam estar no ambiente. O arquivo de parâmetros não guarda segredos. O Container App autentica o pull no GHCR mesmo com o pacote público. `GHCR_TOKEN` é um personal access token clássico com o escopo `read:packages`. Sem a URL do webhook, a conversa funciona e nenhum aviso é enviado à Nest.
 
 Para cerca de 300 usuários/dia, o turno fica síncrono e sem fila: há limite por UID+IP, payload e texto limitados, timeout do Gemini, idempotência e apenas um turno simultâneo por conversa. Adote Azure Queue Storage + worker somente quando houver throttling sustentado, necessidade de conclusão em background ou respostas maiores que o timeout HTTP. Queue Storage é barato, mas não possui gratuidade permanente garantida; o worker pode usar Container Apps com escala a zero.
 

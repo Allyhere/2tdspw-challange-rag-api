@@ -220,19 +220,43 @@ registry.registerPath({
   tags: ["Conversas"],
   summary: "Enviar pergunta do tutor e obter resposta grounded",
   description:
-    "Somente o tutor vinculado. Reutilize idempotencyKey apenas no retry da mesma ação.",
+    "Somente o tutor vinculado. Com agentEnabled, a resposta traz a mensagem do agente. Depois que o vet assume, grava a mensagem do tutor e não chama o modelo. Reutilize idempotencyKey apenas no retry da mesma ação. Token de vet recebe 403.",
   security: [{ [bearerAuth.name]: [] }],
   request: {
     params: z.object({ id: conversationId }),
     body: jsonRequest(inboundMessage),
   },
   responses: {
-    200: jsonResponse("Status atualizado e resposta do agente.", conversationStart),
+    200: jsonResponse(
+      "Com o agente ligado, a resposta do agente. Com o agente desligado, a mensagem gravada do tutor.",
+      conversationStart,
+    ),
     400: jsonResponse("Mensagem inválida.", errorResponse),
     ...standardAuthErrors,
     404: jsonResponse("Conversa ausente ou invisível ao tutor.", errorResponse),
     409: jsonResponse("Outro turno já está em processamento.", errorResponse),
     502: jsonResponse("Falha ao gerar resposta.", errorResponse),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/conversations/{id}/vet-messages",
+  tags: ["Conversas"],
+  summary: "Veterinário assume a conversa",
+  description:
+    "Somente o vet vinculado. Grava a mensagem com papel vet, desliga o agente na primeira mensagem e não chama o modelo. Reutilize idempotencyKey apenas no retry da mesma ação. Token de tutor recebe 403.",
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    params: z.object({ id: conversationId }),
+    body: jsonRequest(inboundMessage),
+  },
+  responses: {
+    200: jsonResponse("Mensagem do veterinário gravada.", conversationStart),
+    400: jsonResponse("Mensagem inválida.", errorResponse),
+    ...standardAuthErrors,
+    404: jsonResponse("Conversa ausente ou invisível ao veterinário.", errorResponse),
+    502: jsonResponse("Falha ao gravar a mensagem.", errorResponse),
   },
 });
 

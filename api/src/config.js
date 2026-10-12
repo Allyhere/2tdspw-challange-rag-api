@@ -64,6 +64,10 @@ export const config = {
     chatModel: trimEnv(process.env.NLP_MODEL, "gemini-3.5-flash-lite"),
     embedModel: trimEnv(process.env.EMBED_MODEL, "gemini-embedding-001"),
   },
+  nest: {
+    webhookUrl: trimEnv(process.env.NEST_CHAT_WEBHOOK_URL),
+    webhookSecret: trimEnv(process.env.NEST_CHAT_WEBHOOK_SECRET),
+  },
   vector: {
     indexName: "guideline_index",
     nodeLabel: "GuidelineChunk",

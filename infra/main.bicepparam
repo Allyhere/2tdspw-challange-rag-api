@@ -20,3 +20,5 @@ param corsOrigins = readEnvironmentVariable('CORS_ORIGINS', 'http://localhost:51
 param geminiApiKey = readEnvironmentVariable('GEMINI_API_KEY', '')
 param neo4jPassword = readEnvironmentVariable('NEO4J_PASSWORD', '')
 param registryPassword = readEnvironmentVariable('GHCR_TOKEN', '')
+param nestChatWebhookUrl = readEnvironmentVariable('NEST_CHAT_WEBHOOK_URL', '')
+param nestChatWebhookSecret = readEnvironmentVariable('NEST_CHAT_WEBHOOK_SECRET', '')

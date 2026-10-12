@@ -154,6 +154,7 @@ function toPublicConversation(conversation) {
   return {
     id: conversation.id,
     status: conversation.status,
+    agentEnabled: conversation.agentEnabled !== false,
     channel: conversation.channel,
     tutor: conversation.tutor,
     pet: conversation.pet,
@@ -232,6 +233,7 @@ function toPublicSummary(conversation) {
   return {
     id: conversation.id,
     status: conversation.status,
+    agentEnabled: conversation.agentEnabled !== false,
     channel: conversation.channel,
     tutor: conversation.tutor,
     pet: conversation.pet,
@@ -250,6 +252,7 @@ export function createConversations({
   generateTurn = defaultGenerateTurn,
   retrieveChunks = defaultRetrieveChunks,
   loadTreatments = defaultLoadTreatments,
+  notifyTutorMessages = false,
 } = {}) {
   const conversationStore = store ?? createNeo4jConversationStore();
 
@@ -288,6 +291,77 @@ export function createConversations({
     };
   }
 
+  function tutorWebhook(conversation, text) {
+    if (!notifyTutorMessages) return null;
+    return {
+      vetFirebaseUid: conversation.vetFirebaseUid,
+      tutorName: conversation.tutor.name,
+      petName: conversation.pet.name,
+      text,
+    };
+  }
+
+  async function storeUserMessage(conversation, text, providerMessageId, dedupeKey) {
+    return conversationStore.appendMessage(conversation.id, {
+      role: "user",
+      body: text,
+      channel: conversation.channel,
+      providerMessageId: providerMessageId ?? null,
+      dedupeKey,
+      webhook: tutorWebhook(conversation, text),
+    });
+  }
+
+  function requireTutor(actor) {
+    if (!actor) throw httpError(401, "Autenticação obrigatória");
+    if (actor.role !== "owner") {
+      throw httpError(403, "Apenas o tutor pode enviar esta mensagem");
+    }
+  }
+
+  function requireVetWriter(actor) {
+    if (!actor) throw httpError(401, "Autenticação obrigatória");
+    if (actor.role !== "vet") {
+      throw httpError(403, "Apenas veterinários podem enviar esta mensagem");
+    }
+  }
+
+  async function handleVetMessage({
+    conversationId,
+    text,
+    providerMessageId,
+    idempotencyKey,
+    actor,
+  }) {
+    requireVetWriter(actor);
+    const existing = await conversationStore.get(conversationId);
+    if (!existing || existing.vetFirebaseUid !== actor.uid) throw notFound();
+
+    const dedupeKey = `${conversationId}:vet:${idempotencyKey}`;
+    const previous = existing.messages.find((message) => message.dedupeKey === dedupeKey);
+    if (previous) {
+      return {
+        id: conversationId,
+        status: existing.status,
+        message: toPublicMessage(previous),
+      };
+    }
+
+    const appended = await conversationStore.appendMessage(conversationId, {
+      role: "vet",
+      body: text,
+      channel: existing.channel,
+      providerMessageId: providerMessageId ?? null,
+      dedupeKey,
+      disableAgent: true,
+    });
+    return {
+      id: conversationId,
+      status: existing.status,
+      message: toPublicMessage(appended.message),
+    };
+  }
+
   async function handleInbound({
     conversationId,
     text,
@@ -295,11 +369,12 @@ export function createConversations({
     idempotencyKey,
     actor,
   }) {
+    requireTutor(actor);
     const existing = await conversationStore.get(conversationId);
-    if (!existing) throw notFound();
-    authorize(existing, actor, { ownerOnly: true });
+    if (!existing || existing.ownerFirebaseUid !== actor.uid) throw notFound();
 
     const replyKey = `${conversationId}:out:${idempotencyKey}`;
+    const userKey = `${conversationId}:in:${idempotencyKey}`;
     const previousReply = existing.messages.find(
       (message) => message.dedupeKey === replyKey,
     );
@@ -310,6 +385,31 @@ export function createConversations({
         message: toPublicMessage(previousReply),
       };
     }
+
+    if (existing.agentEnabled === false) {
+      const previousUser = existing.messages.find(
+        (message) => message.dedupeKey === userKey,
+      );
+      if (previousUser) {
+        return {
+          id: conversationId,
+          status: existing.status,
+          message: toPublicMessage(previousUser),
+        };
+      }
+      const appended = await storeUserMessage(
+        existing,
+        text,
+        providerMessageId,
+        userKey,
+      );
+      return {
+        id: conversationId,
+        status: existing.status,
+        message: toPublicMessage(appended.message),
+      };
+    }
+
     const acquired = await conversationStore.acquireTurn(
       conversationId,
       idempotencyKey,
@@ -319,15 +419,25 @@ export function createConversations({
     }
 
     try {
-      await conversationStore.appendMessage(conversationId, {
-        role: "user",
-        body: text,
-        channel: existing.channel,
-        providerMessageId: providerMessageId ?? null,
-        dedupeKey: `${conversationId}:in:${idempotencyKey}`,
-      });
+      const userAppend = await storeUserMessage(
+        existing,
+        text,
+        providerMessageId,
+        userKey,
+      );
 
       const withUser = await conversationStore.get(conversationId);
+      if (withUser.agentEnabled === false) {
+        const storedUser =
+          withUser.messages.find((message) => message.dedupeKey === userKey) ??
+          userAppend.message;
+        return {
+          id: conversationId,
+          status: withUser.status,
+          message: toPublicMessage(storedUser),
+        };
+      }
+
       let treatments = null;
       try {
         treatments = await loadTreatments(planNames(existing.carePlan));
@@ -423,5 +533,5 @@ export function createConversations({
     };
   }
 
-  return { start, handleInbound, get, list };
+  return { start, handleInbound, handleVetMessage, get, list };
 }

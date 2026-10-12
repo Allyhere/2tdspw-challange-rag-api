@@ -67,6 +67,15 @@ param registryPassword string
 @description('Chave privada PEM da service account Firebase.')
 param firebasePrivateKey string
 
+@description('URL do webhook de chat da API Nest. Vazio desliga o aviso.')
+param nestChatWebhookUrl string = ''
+
+@secure()
+@description('Segredo enviado em x-chat-webhook-secret. Vazio desliga o aviso.')
+param nestChatWebhookSecret string
+
+var notifyNest = !empty(nestChatWebhookUrl) && !empty(nestChatWebhookSecret)
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -101,7 +110,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           passwordSecretRef: 'ghcr-pull'
         }
       ]
-      secrets: [
+      secrets: concat([
         {
           name: 'gemini-api-key'
           value: geminiApiKey
@@ -118,7 +127,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'firebase-private-key'
           value: firebasePrivateKey
         }
-      ]
+      ], notifyNest ? [
+        {
+          name: 'nest-chat-webhook-secret'
+          value: nestChatWebhookSecret
+        }
+      ] : [])
     }
     template: {
       containers: [
@@ -129,7 +143,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          env: [
+          env: concat([
             {
               name: 'PORT'
               value: '3000'
@@ -178,7 +192,16 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'GEMINI_TIMEOUT_MS'
               value: '20000'
             }
-          ]
+          ], notifyNest ? [
+            {
+              name: 'NEST_CHAT_WEBHOOK_URL'
+              value: nestChatWebhookUrl
+            }
+            {
+              name: 'NEST_CHAT_WEBHOOK_SECRET'
+              secretRef: 'nest-chat-webhook-secret'
+            }
+          ] : [])
           probes: [
             {
               type: 'Readiness'

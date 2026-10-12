@@ -96,6 +96,7 @@ GET /v1/conversations?limit=20&cursor=<opaque>
       },
       "createdAt": "2026-10-12T18:00:00.000Z",
       "updatedAt": "2026-10-12T18:05:00.000Z",
+      "agentEnabled": true,
       "lastMessage": {
         "id": "message-id",
         "role": "assistant",
@@ -132,7 +133,23 @@ Content-Type: application/json
 }
 ```
 
-Use uma chave nova por ação do usuário e reutilize-a apenas em retry da mesma ação. `409` indica que já existe outro turno sendo gerado; `429` inclui `Retry-After`.
+Use uma chave nova por ação do usuário e reutilize-a apenas em retry da mesma ação. `409` indica que já existe outro turno sendo gerado; `429` inclui `Retry-After`. Enquanto `agentEnabled` é `true`, a resposta inclui a mensagem do agente. Depois que o vet assume, a mesma rota grava `role: "user"` e não chama o modelo. Token de vet recebe `403`.
+
+### Veterinário assume a conversa
+
+```http
+POST /v1/conversations/{conversationId}/vet-messages
+Content-Type: application/json
+```
+
+```json
+{
+  "text": "Olá, aqui é a clínica.",
+  "idempotencyKey": "vet-018f4f1a-5e18-7b28-a9d0"
+}
+```
+
+Somente o vet vinculado. A mensagem é gravada com `role: "vet"`. A primeira desliga o agente (`agentEnabled: false`) sem alterar `invited`, `accepted` ou `declined`. Não há chamada ao modelo nem mensagem do agente. Repetir a mesma `idempotencyKey` devolve a mensagem original. Token de tutor recebe `403`. Conversa desconhecida recebe `404`.
 
 ## Ordem de rollout
 
@@ -213,7 +230,8 @@ Requisitos:
 Respostas relevantes:
 - GET lista: { items: ConversationSummary[], nextCursor: string | null }
 - POST mensagem: { id: string, status: "invited" | "accepted" | "declined", message: PublicMessage }
-- PublicMessage: { id, role: "assistant" | "user", text, createdAt, providerMessageId? }
+- PublicMessage: { id, role: "assistant" | "user" | "vet", text, createdAt, providerMessageId? }
+- Conversation e cada item da caixa incluem agentEnabled: boolean
 
 Não modifique o repositório da API. Entregue um resumo dos arquivos alterados e dos comandos de verificação.
 ```

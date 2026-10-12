@@ -209,6 +209,40 @@ export function createApp({
     },
   );
 
+  app.post(
+    "/v1/conversations/:id/vet-messages",
+    authenticate,
+    rateLimiter,
+    async (req, res) => {
+      const parsed = inboundMessageSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Payload inválido",
+          issues: parsed.error.flatten(),
+        });
+      }
+
+      try {
+        const result = await conversations.handleVetMessage({
+          conversationId: req.params.id,
+          text: parsed.data.text,
+          idempotencyKey: parsed.data.idempotencyKey,
+          providerMessageId: parsed.data.providerMessageId,
+          actor: req.actor,
+        });
+        return res.json(result);
+      } catch (error) {
+        const status = error.status || 502;
+        if (status >= 500) {
+          console.error("Erro na mensagem do veterinário:", error);
+        }
+        return res.status(status).json({
+          message: error.message || "Falha ao gravar a mensagem",
+        });
+      }
+    },
+  );
+
   app.use((error, _req, res, _next) => {
     if (error.type === "entity.too.large") {
       return res.status(413).json({ message: "Payload muito grande" });

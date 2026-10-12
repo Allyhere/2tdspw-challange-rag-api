@@ -1,8 +1,23 @@
 import { config } from "./config.js";
 import { createApp } from "./app.js";
+import { createChatWebhookWorker } from "./chatWebhook.js";
+import { createConversations } from "./conversation.js";
+import { createNeo4jConversationStore } from "./conversationStore.js";
 import { closeDriver, getDriver } from "./neo4j.js";
 
-const app = createApp();
+const store = createNeo4jConversationStore();
+const conversations = createConversations({
+  store,
+  notifyTutorMessages: Boolean(config.nest.webhookUrl),
+});
+const chatWebhookWorker = createChatWebhookWorker({
+  store,
+  url: config.nest.webhookUrl,
+  secret: config.nest.webhookSecret,
+});
+chatWebhookWorker.start();
+
+const app = createApp({ conversations });
 
 const server = app.listen(config.port, () => {
   console.log(`API RAG em http://localhost:${config.port}`);
@@ -23,6 +38,7 @@ server.headersTimeout = 0;
 server.keepAliveTimeout = 0;
 
 async function shutdown() {
+  chatWebhookWorker.stop();
   server.close();
   await closeDriver();
   process.exit(0);

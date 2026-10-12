@@ -11,6 +11,7 @@ test("OpenAPI document exposes every public HTTP operation", () => {
     "/v1/conversations",
     "/v1/conversations/{id}",
     "/v1/conversations/{id}/messages",
+    "/v1/conversations/{id}/vet-messages",
     "/v1/ingest",
   ]);
 });
@@ -22,6 +23,7 @@ test("conversation operations document Firebase bearer authentication", () => {
     paths["/v1/conversations"].post,
     paths["/v1/conversations/{id}"].get,
     paths["/v1/conversations/{id}/messages"].post,
+    paths["/v1/conversations/{id}/vet-messages"].post,
   ];
 
   for (const operation of operations) {
@@ -39,6 +41,16 @@ test("generated schemas retain conversation validation constraints", () => {
   const schemas = openApiDocument.components.schemas;
   assert.equal(schemas.InboundMessage.properties.text.maxLength, 2000);
   assert.equal(schemas.InboundMessage.properties.idempotencyKey.minLength, 8);
+  assert.deepEqual(schemas.Conversation.properties.messages.items.properties.role.enum, [
+    "assistant",
+    "user",
+    "vet",
+  ]);
+  assert.equal(schemas.Conversation.properties.agentEnabled.type, "boolean");
+  assert.equal(
+    schemas.ConversationListResponse.properties.items.items.properties.agentEnabled.type,
+    "boolean",
+  );
   assert.match(
     schemas.ConversationIntake.properties.tutor.properties.phone.pattern,
     /\\\+/,
