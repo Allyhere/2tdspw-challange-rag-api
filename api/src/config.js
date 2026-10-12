@@ -29,6 +29,24 @@ export function normalizeNeo4jUri(raw) {
 
 export const config = {
   port: Number(process.env.PORT || 3000),
+  corsOrigins: trimEnv(
+    process.env.CORS_ORIGINS,
+    "http://localhost:5173,http://127.0.0.1:5173",
+  )
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  firebase: {
+    projectId: trimEnv(process.env.FIREBASE_PROJECT_ID),
+    clientEmail: trimEnv(process.env.FIREBASE_CLIENT_EMAIL),
+    privateKey: trimEnv(process.env.FIREBASE_PRIVATE_KEY).replace(/\\n/g, "\n"),
+  },
+  limits: {
+    json: trimEnv(process.env.JSON_BODY_LIMIT, "32kb"),
+    rateWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
+    rateMax: Number(process.env.RATE_LIMIT_MAX || 30),
+    geminiTimeoutMs: Number(process.env.GEMINI_TIMEOUT_MS || 20_000),
+  },
   neo4j: {
     uri: normalizeNeo4jUri(process.env.NEO4J_URI),
     user: trimEnv(

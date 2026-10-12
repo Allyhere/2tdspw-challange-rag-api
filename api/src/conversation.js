@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -163,6 +164,12 @@ function toPublicConversation(conversation) {
   };
 }
 
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 function notFound() {
   const error = new Error("Conversa não encontrada");
   error.status = 404;
@@ -171,8 +178,71 @@ function notFound() {
 
 function nextStatus(current, intent) {
   if (current !== "invited") return current;
+  if (intent === "accept") return "accepted";
   if (intent === "decline") return "declined";
   return current;
+}
+
+function carePlanFromStep(planStep) {
+  return [
+    {
+      planItemName: planStep.planItemName,
+      planRecurrency: planStep.planRecurrency,
+      ...(planStep.planRecurrencyRate == null
+        ? {}
+        : { planRecurrencyRate: planStep.planRecurrencyRate }),
+      planDurationInMonths: planStep.planDurationInMonths,
+    },
+  ];
+}
+
+function conversationKey({ vetUid, ownerUid, petId, planStepId }) {
+  return createHash("sha256")
+    .update([vetUid, ownerUid, petId, planStepId].join("\u001f"))
+    .digest("hex");
+}
+
+function authorize(conversation, actor, { ownerOnly = false } = {}) {
+  if (!actor) throw httpError(401, "Autenticação obrigatória");
+  const isOwner =
+    actor.role === "owner" && conversation.ownerFirebaseUid === actor.uid;
+  const isVet = actor.role === "vet" && conversation.vetFirebaseUid === actor.uid;
+  if (!isOwner && (!isVet || ownerOnly)) throw notFound();
+}
+
+function encodeCursor(conversation) {
+  return Buffer.from(
+    JSON.stringify({ updatedAt: conversation.updatedAt, id: conversation.id }),
+  ).toString("base64url");
+}
+
+function decodeCursor(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (!parsed.updatedAt || !parsed.id) throw new Error();
+    return parsed;
+  } catch {
+    throw httpError(400, "Cursor inválido");
+  }
+}
+
+function toPublicSummary(conversation) {
+  const messages = conversation.messages ?? [];
+  return {
+    id: conversation.id,
+    status: conversation.status,
+    channel: conversation.channel,
+    tutor: conversation.tutor,
+    pet: conversation.pet,
+    planStep: {
+      id: conversation.planStepId,
+      ...conversation.carePlan[0],
+    },
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    lastMessage: toPublicMessage(messages.at(-1) ?? null),
+  };
 }
 
 export function createConversations({
@@ -183,110 +253,175 @@ export function createConversations({
 } = {}) {
   const conversationStore = store ?? createNeo4jConversationStore();
 
-  async function start(intake) {
-    const names = planNames(intake.carePlan).join(", ");
-    const conversation = await conversationStore.create({
+  async function start(intake, { actor, owner }) {
+    if (actor?.role !== "vet") throw httpError(403, "Apenas veterinários podem convidar");
+    const carePlan = carePlanFromStep(intake.planStep);
+    const key = conversationKey({
+      vetUid: actor.uid,
+      ownerUid: owner.uid,
+      petId: intake.pet.id,
+      planStepId: intake.planStep.id,
+    });
+    const created = await conversationStore.create({
+      key,
+      vetFirebaseUid: actor.uid,
+      ownerFirebaseUid: owner.uid,
+      ownerPhone: owner.phone,
       tutor: intake.tutor,
       pet: intake.pet,
-      carePlan: intake.carePlan,
+      carePlan,
+      planStepId: intake.planStep.id,
       channel: intake.channel ?? "api",
       status: "invited",
     });
-    const message = await conversationStore.appendMessage(conversation.id, {
+    const conversation = created.conversation;
+    const appended = await conversationStore.appendMessage(conversation.id, {
       role: "assistant",
-      body: `Oi ${intake.tutor.name}! Cuidados do ${intake.pet.name} no próximo mês: ${names}.`,
+      body: `Oi ${intake.tutor.name}! O cuidado de ${intake.pet.name} é ${intake.planStep.planItemName}. Você aceita seguir com esta etapa do plano?`,
       channel: conversation.channel,
+      dedupeKey: `${conversation.id}:invite`,
     });
     return {
       id: conversation.id,
-      status: "invited",
-      message: toPublicMessage(message),
+      status: conversation.status,
+      message: toPublicMessage(appended.message),
     };
   }
 
-  async function handleInbound({ conversationId, text, providerMessageId }) {
+  async function handleInbound({
+    conversationId,
+    text,
+    providerMessageId,
+    idempotencyKey,
+    actor,
+  }) {
     const existing = await conversationStore.get(conversationId);
     if (!existing) throw notFound();
+    authorize(existing, actor, { ownerOnly: true });
 
-    await conversationStore.appendMessage(conversationId, {
-      role: "user",
-      body: text,
-      channel: existing.channel,
-      providerMessageId: providerMessageId ?? null,
-    });
-
-    const withUser = await conversationStore.get(conversationId);
-    let treatments = null;
-    try {
-      treatments = await loadTreatments(planNames(existing.carePlan));
-    } catch (error) {
-      console.warn("Tratamentos do plano indisponíveis:", error.message);
-    }
-    const rows = treatments?.length
-      ? treatments
-      : treatmentsFromPlan(existing.carePlan);
-
-    let chunks = [];
-    try {
-      chunks = (await retrieveChunks(text)) ?? [];
-    } catch (error) {
-      console.warn("Busca de diretriz falhou:", error.message);
-      chunks = [];
-    }
-
-    const names = planNames(existing.carePlan).join(", ");
-    let reply;
-    let intent;
-    try {
-      const turn = await generateTurn({
-        kind: "reply",
-        intake: {
-          tutor: existing.tutor,
-          pet: existing.pet,
-          carePlan: existing.carePlan,
-          channel: existing.channel,
-        },
+    const replyKey = `${conversationId}:out:${idempotencyKey}`;
+    const previousReply = existing.messages.find(
+      (message) => message.dedupeKey === replyKey,
+    );
+    if (previousReply) {
+      return {
+        id: conversationId,
         status: existing.status,
-        history: withUser.messages,
-        inboundText: text,
-        chunks,
-        treatments: rows,
+        message: toPublicMessage(previousReply),
+      };
+    }
+    const acquired = await conversationStore.acquireTurn(
+      conversationId,
+      idempotencyKey,
+    );
+    if (!acquired) {
+      throw httpError(409, "Já existe uma resposta sendo processada");
+    }
+
+    try {
+      await conversationStore.appendMessage(conversationId, {
+        role: "user",
+        body: text,
+        channel: existing.channel,
+        providerMessageId: providerMessageId ?? null,
+        dedupeKey: `${conversationId}:in:${idempotencyKey}`,
       });
-      reply = turn.reply;
-      intent = turn.intent;
-    } catch (error) {
-      console.warn("Chat falhou, respondendo com o plano:", error.message);
-      reply = `${names}. Este chat não agenda horário. A clínica confirma o dia.`;
-      intent = null;
-    }
 
-    if (intent === "accept") {
-      reply = `${names}. Este chat não agenda horário. A clínica confirma o dia.`;
-    } else if (intent && replyNamesOffPlan(reply, existing.carePlan)) {
-      reply = `Os cuidados deste plano são ${names}. Qualquer outro a clínica precisa confirmar.`;
-    }
+      const withUser = await conversationStore.get(conversationId);
+      let treatments = null;
+      try {
+        treatments = await loadTreatments(planNames(existing.carePlan));
+      } catch (error) {
+        console.warn("Tratamentos do plano indisponíveis:", error.message);
+      }
+      const rows = treatments?.length
+        ? treatments
+        : treatmentsFromPlan(existing.carePlan);
 
-    const status = nextStatus(existing.status, intent);
-    if (status !== existing.status) {
-      await conversationStore.updateStatus(conversationId, status);
-    }
+      let chunks = [];
+      try {
+        chunks = (await retrieveChunks(text)) ?? [];
+      } catch (error) {
+        console.warn("Busca de diretriz falhou:", error.message);
+        chunks = [];
+      }
 
-    const message = await conversationStore.appendMessage(conversationId, {
-      role: "assistant",
-      body: reply,
-      channel: existing.channel,
-    });
-    return {
-      id: conversationId,
-      status,
-      message: toPublicMessage(message),
-    };
+      const names = planNames(existing.carePlan).join(", ");
+      let reply;
+      let intent;
+      try {
+        const turn = await generateTurn({
+          kind: "reply",
+          intake: {
+            tutor: existing.tutor,
+            pet: existing.pet,
+            carePlan: existing.carePlan,
+            channel: existing.channel,
+          },
+          status: existing.status,
+          history: withUser.messages,
+          inboundText: text,
+          chunks,
+          treatments: rows,
+        });
+        reply = turn.reply;
+        intent = turn.intent;
+      } catch (error) {
+        console.warn("Chat falhou, respondendo com o plano:", error.message);
+        reply = `${names}. Este chat não agenda horário. A clínica confirma o dia.`;
+        intent = null;
+      }
+
+      if (intent === "accept") {
+        reply = `${names}. Este chat não agenda horário. A clínica confirma o dia.`;
+      } else if (intent && replyNamesOffPlan(reply, existing.carePlan)) {
+        reply = `Os cuidados deste plano são ${names}. Qualquer outro a clínica precisa confirmar.`;
+      }
+
+      const status = nextStatus(existing.status, intent);
+      if (status !== existing.status) {
+        await conversationStore.updateStatus(conversationId, status);
+      }
+
+      const appended = await conversationStore.appendMessage(conversationId, {
+        role: "assistant",
+        body: reply,
+        channel: existing.channel,
+        dedupeKey: replyKey,
+      });
+      return {
+        id: conversationId,
+        status,
+        message: toPublicMessage(appended.message),
+      };
+    } finally {
+      await conversationStore.releaseTurn(conversationId, idempotencyKey);
+    }
   }
 
-  async function get(conversationId) {
+  async function get(conversationId, actor) {
     const conversation = await conversationStore.get(conversationId);
+    if (conversation) authorize(conversation, actor);
     return toPublicConversation(conversation);
   }
 
-  return { start, handleInbound, get };
+  async function list({ actor, limit, cursor }) {
+    if (!actor) throw httpError(401, "Autenticação obrigatória");
+    const identityField =
+      actor.role === "owner" ? "ownerFirebaseUid" : "vetFirebaseUid";
+    const rows = await conversationStore.list({
+      identityField,
+      uid: actor.uid,
+      limit: limit + 1,
+      cursor: decodeCursor(cursor),
+    });
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit);
+    return {
+      items: items.map(toPublicSummary),
+      nextCursor: hasMore ? encodeCursor(items.at(-1)) : null,
+    };
+  }
+
+  return { start, handleInbound, get, list };
 }

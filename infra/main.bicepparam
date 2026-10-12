@@ -12,6 +12,10 @@ param neo4jUser = readEnvironmentVariable('NEO4J_USER', 'neo4j')
 param chatModel = 'gemini-3.5-flash-lite'
 param embedModel = 'gemini-embedding-001'
 param minReplicas = 0
+param firebaseProjectId = readEnvironmentVariable('FIREBASE_PROJECT_ID', '')
+param firebaseClientEmail = readEnvironmentVariable('FIREBASE_CLIENT_EMAIL', '')
+param firebasePrivateKey = readEnvironmentVariable('FIREBASE_PRIVATE_KEY', '')
+param corsOrigins = readEnvironmentVariable('CORS_ORIGINS', 'http://localhost:5173')
 // Lidos do ambiente na hora do deploy. Carregue o .env antes; não grave os valores aqui.
 param geminiApiKey = readEnvironmentVariable('GEMINI_API_KEY', '')
 param neo4jPassword = readEnvironmentVariable('NEO4J_PASSWORD', '')

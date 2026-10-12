@@ -3,11 +3,17 @@ import express from "express";
 import { z } from "zod";
 
 import { config } from "./config.js";
+import {
+  createAuthMiddleware,
+  createFirebaseIdentityService,
+} from "./auth.js";
 import { createConversations } from "./conversation.js";
+import { createRateLimiter } from "./rateLimit.js";
 import { runIngest as defaultRunIngest } from "./ingest.js";
 import { formatServerTiming, generateCarePlan } from "./rag.js";
 import {
   conversationIntakeSchema,
+  conversationListSchema,
   inboundMessageSchema,
   petInputSchema,
 } from "./schema.js";
@@ -19,10 +25,24 @@ export const ingestRequestSchema = z.object({
 export function createApp({
   runIngest = defaultRunIngest,
   conversations = createConversations(),
+  identityService = createFirebaseIdentityService(),
+  rateLimiter = createRateLimiter(),
 } = {}) {
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+  app.set("trust proxy", 1);
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (!origin || config.corsOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error("Origem não permitida"));
+      },
+    }),
+  );
+  app.use(express.json({ limit: config.limits.json }));
+  const authenticate = createAuthMiddleware(identityService);
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -77,7 +97,7 @@ export function createApp({
     }
   });
 
-  app.post("/v1/conversations", async (req, res) => {
+  app.post("/v1/conversations", authenticate, rateLimiter, async (req, res) => {
     const parsed = conversationIntakeSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -87,20 +107,48 @@ export function createApp({
     }
 
     try {
-      const result = await conversations.start(parsed.data);
+      if (req.actor.role !== "vet") {
+        return res.status(403).json({ message: "Apenas veterinários podem convidar" });
+      }
+      const owner = await identityService.resolveOwnerByPhone(
+        parsed.data.tutor.phone,
+      );
+      const result = await conversations.start(parsed.data, {
+        actor: req.actor,
+        owner,
+      });
       return res.json(result);
     } catch (error) {
-      console.error("Erro ao iniciar conversa:", error);
       const status = error.status || 502;
+      if (status >= 500) console.error("Erro ao iniciar conversa:", error);
       return res.status(status).json({
         message: error.message || "Falha ao iniciar a conversa",
       });
     }
   });
 
-  app.get("/v1/conversations/:id", async (req, res) => {
+  app.get("/v1/conversations", authenticate, rateLimiter, async (req, res) => {
+    const parsed = conversationListSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Parâmetros inválidos",
+        issues: parsed.error.flatten(),
+      });
+    }
     try {
-      const found = await conversations.get(req.params.id);
+      return res.json(
+        await conversations.list({ actor: req.actor, ...parsed.data }),
+      );
+    } catch (error) {
+      return res.status(error.status || 502).json({
+        message: error.message || "Falha ao listar conversas",
+      });
+    }
+  });
+
+  app.get("/v1/conversations/:id", authenticate, rateLimiter, async (req, res) => {
+    try {
+      const found = await conversations.get(req.params.id, req.actor);
       if (!found) {
         return res.status(404).json({ message: "Conversa não encontrada" });
       }
@@ -114,7 +162,11 @@ export function createApp({
     }
   });
 
-  app.post("/v1/conversations/:id/messages", async (req, res) => {
+  app.post(
+    "/v1/conversations/:id/messages",
+    authenticate,
+    rateLimiter,
+    async (req, res) => {
     const parsed = inboundMessageSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -127,7 +179,9 @@ export function createApp({
       const result = await conversations.handleInbound({
         conversationId: req.params.id,
         text: parsed.data.text,
+        idempotencyKey: parsed.data.idempotencyKey,
         providerMessageId: parsed.data.providerMessageId,
+        actor: req.actor,
       });
       return res.json(result);
     } catch (error) {
@@ -139,6 +193,18 @@ export function createApp({
         message: error.message || "Falha ao processar a mensagem",
       });
     }
+    },
+  );
+
+  app.use((error, _req, res, _next) => {
+    if (error.type === "entity.too.large") {
+      return res.status(413).json({ message: "Payload muito grande" });
+    }
+    if (error.message === "Origem não permitida") {
+      return res.status(403).json({ message: error.message });
+    }
+    console.error("Erro HTTP:", error);
+    return res.status(500).json({ message: "Erro interno" });
   });
 
   return app;

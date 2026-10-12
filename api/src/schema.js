@@ -68,6 +68,7 @@ export const carePlanResponseSchema = z.object({
 });
 
 export const conversationPetSchema = z.object({
+  id: z.string().min(1),
   name: z.string().min(1),
   breed: z.string().min(1),
   species: z.enum(["cachorro", "gato"]),
@@ -79,16 +80,25 @@ export const conversationPetSchema = z.object({
 export const conversationIntakeSchema = z.object({
   tutor: z.object({
     name: z.string().min(1),
-    phone: z.string().min(1).optional(),
+    phone: z.string().regex(/^\+[1-9]\d{7,14}$/, "Use telefone no formato E.164"),
   }),
   pet: conversationPetSchema,
-  carePlan: z.array(carePlanItemSchema).min(1),
+  planStep: carePlanItemSchema.extend({
+    id: z.string().min(1),
+    scheduledAt: z.string().datetime({ offset: true }).optional(),
+  }),
   channel: z.enum(["api", "whatsapp", "telegram"]).default("api"),
 });
 
 export const inboundMessageSchema = z.object({
-  text: z.string().min(1),
+  text: z.string().trim().min(1).max(2000),
+  idempotencyKey: z.string().min(8).max(128),
   providerMessageId: z.string().min(1).optional(),
+});
+
+export const conversationListSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().min(1).optional(),
 });
 
 export const llmTurnSchema = z.object({

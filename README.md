@@ -56,40 +56,50 @@ sh scripts/request.sh
 
 ### 4. Convidar o tutor (chat)
 
-Depois do plano, `POST /v1/conversations` monta o convite com o nome do tutor, o pet e os procedimentos do plano. O canal `"api"` devolve o texto no JSON (Twilio/Telegram entram depois no mesmo motor).
+Depois do plano, o veterinário autenticado inicia uma conversa para **uma etapa**. Todas as rotas de conversa exigem `Authorization: Bearer <Firebase ID token>`. O telefone deve estar em E.164 e já pertencer a um usuário Firebase.
 
 ```bash
 curl -sf -X POST http://localhost:3000/v1/conversations \
+  -H "Authorization: Bearer $VET_FIREBASE_ID_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "tutor": { "name": "Ana" },
-    "pet": { "name": "Thor", "breed": "Labrador", "species": "cachorro" },
-    "carePlan": [
-      { "planItemName": "V10", "planRecurrency": "recurrent", "planRecurrencyRate": 12, "planDurationInMonths": 60 },
-      { "planItemName": "Antirrábica", "planRecurrency": "recurrent", "planRecurrencyRate": 12, "planDurationInMonths": 60 },
-      { "planItemName": "Exame de fezes", "planRecurrency": "recurrent", "planRecurrencyRate": 6, "planDurationInMonths": 12 }
-    ]
+    "tutor": { "name": "Ana", "phone": "+5511999999999" },
+    "pet": { "id": "pet-123", "name": "Thor", "breed": "Labrador", "species": "cachorro" },
+    "planStep": {
+      "id": "appointment-456",
+      "planItemName": "V10",
+      "planRecurrency": "recurrent",
+      "planRecurrencyRate": 12,
+      "planDurationInMonths": 60
+    }
   }'
 ```
 
 Resposta: `{ "id", "status": "invited", "message": { "id", "role": "assistant", "text", "createdAt" } }`. Use o `id` nas próximas chamadas.
 
 ```bash
-# pergunta sobre um procedimento (status continua invited)
+# caixa de entrada mais recente
+curl -sf http://localhost:3000/v1/conversations?limit=20 \
+  -H "Authorization: Bearer $OWNER_FIREBASE_ID_TOKEN"
+
+# pergunta sobre um procedimento
 curl -sf -X POST http://localhost:3000/v1/conversations/<id>/messages \
+  -H "Authorization: Bearer $OWNER_FIREBASE_ID_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"text":"O que é a V10?"}'
+  -d '{"text":"O que é a V10?","idempotencyKey":"web-018f4f1a"}'
 
 # aceite ou recusa
 curl -sf -X POST http://localhost:3000/v1/conversations/<id>/messages \
+  -H "Authorization: Bearer $OWNER_FIREBASE_ID_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"text":"Pode sim"}'
+  -d '{"text":"Pode sim","idempotencyKey":"web-018f4f1b"}'
 
 # thread persistida
-curl -sf http://localhost:3000/v1/conversations/<id>
+curl -sf http://localhost:3000/v1/conversations/<id> \
+  -H "Authorization: Bearer $OWNER_FIREBASE_ID_TOKEN"
 ```
 
-`providerMessageId` no body da mensagem é opcional (MessageSid do Twilio, depois).
+O `idempotencyKey` evita mensagens duplicadas em retries. `providerMessageId` continua opcional para um futuro adaptador.
 
 ### 5. Reindexar documentos
 
@@ -307,16 +317,21 @@ Erros úteis:
 | **400** | Payload inválido (Zod). |
 | **502** | Nenhum item do catálogo se aplica, ou falha ao gerar o plano. |
 
-`POST /v1/conversations` — tutor (`name`, `phone` opcional), pet (`name`, `breed`, `species`, …), `carePlan` já fatiado para o próximo mês, `channel` opcional (`api` | `whatsapp` | `telegram`, padrão `api`). Resposta: `{ id, status: "invited", message }`.
+`POST /v1/conversations` — somente vet Firebase (login por e-mail). Recebe tutor (`name`, `phone` E.164 obrigatório), pet com `id`, e um `planStep` com id estável e os dados exatos do item do plano. O telefone é resolvido pelo Firebase Admin; telefone sem cadastro retorna `404`. Repetir vet+tutor+pet+etapa devolve a mesma conversa.
 
-`POST /v1/conversations/:id/messages` — `{ "text", "providerMessageId?" }`. Resposta: `{ id, status, message }`. O status fica `invited` até um `decline` do modelo. `accept` não agenda e não vira `accepted`. Perguntas sobre os procedimentos do plano usam os chunks GraphRAG. Depois de `declined`, uma pergunta ainda é respondida e o status não volta.
+`GET /v1/conversations?limit=20&cursor=…` — caixa de entrada do Firebase UID autenticado, ordenada por `updatedAt` decrescente. Cada item traz `lastMessage`; `nextCursor` pagina sem `SKIP`.
 
-`GET /v1/conversations/:id` — snapshot (tutor, pet, plano) e a thread em ordem.
+`POST /v1/conversations/:id/messages` — somente o tutor dono da conversa. Recebe `{ "text", "idempotencyKey", "providerMessageId?" }`. Resposta: `{ id, status, message }`. `accept` vira `accepted`, `decline` vira `declined`; o chat não agenda horário. Perguntas usam GraphRAG e não podem incluir tratamentos fora daquela etapa.
+
+`GET /v1/conversations/:id` — snapshot e thread em ordem, apenas para o vet ou tutor vinculados.
 
 | HTTP | Quando |
 | --- | --- |
 | **400** | Payload inválido (Zod). |
-| **404** | Conversa inexistente. |
+| **401/403** | Token ausente/inválido ou papel não permitido. |
+| **404** | Conversa invisível ao usuário ou telefone não cadastrado. |
+| **409** | Já existe um turno sendo processado. |
+| **429** | Limite por Firebase UID + IP excedido. |
 | **502** | Falha ao gerar o turno (Gemini). |
 
 ---
@@ -350,9 +365,11 @@ O Compose sobe API, Neo4j e seed na sua máquina. Na nuvem entra só a API, no A
 
 A região é **Chile Central**. A assinatura de estudante aceita Chile Central, East US 2, South Africa North, Canada Central e Spain Central. Se o deploy em Chile Central for recusado por cota, troque `location` para `eastus2` em [`infra/main.bicepparam`](infra/main.bicepparam).
 
-O app tem 0,5 vCPU, 1 GiB e no máximo 1 réplica. `minReplicas=0` pausa o processo: a URL fica, e a primeira chamada depois da pausa espera o container subir. `minReplicas=1` deixa uma réplica ligada o dia da aula.
+O app tem 0,5 vCPU, 1 GiB, regra HTTP de 10 requisições concorrentes e no máximo 1 réplica. `minReplicas=0` pausa o processo: a URL fica, e a primeira chamada depois da pausa espera o container subir. `minReplicas=1` deixa uma réplica ligada o dia da aula.
 
-`GEMINI_API_KEY`, `NEO4J_PASSWORD` e `GHCR_TOKEN` são parâmetros seguros. O arquivo de parâmetros não guarda esses valores. O Container App autentica o pull no GHCR mesmo com o pacote público. `GHCR_TOKEN` é um personal access token clássico com o escopo `read:packages`.
+`GEMINI_API_KEY`, `NEO4J_PASSWORD`, `FIREBASE_PRIVATE_KEY` e `GHCR_TOKEN` são parâmetros seguros. `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` e `CORS_ORIGINS` também precisam estar no ambiente. O arquivo de parâmetros não guarda segredos. O Container App autentica o pull no GHCR mesmo com o pacote público. `GHCR_TOKEN` é um personal access token clássico com o escopo `read:packages`.
+
+Para cerca de 300 usuários/dia, o turno fica síncrono e sem fila: há limite por UID+IP, payload e texto limitados, timeout do Gemini, idempotência e apenas um turno simultâneo por conversa. Adote Azure Queue Storage + worker somente quando houver throttling sustentado, necessidade de conclusão em background ou respostas maiores que o timeout HTTP. Queue Storage é barato, mas não possui gratuidade permanente garantida; o worker pode usar Container Apps com escala a zero.
 
 ### 1. Registrar o provider
 
@@ -398,6 +415,10 @@ az deployment group create \
     geminiApiKey="$GEMINI_API_KEY" \
     neo4jPassword="$NEO4J_PASSWORD" \
     neo4jUri="$NEO4J_URI" \
+    firebaseProjectId="$FIREBASE_PROJECT_ID" \
+    firebaseClientEmail="$FIREBASE_CLIENT_EMAIL" \
+    firebasePrivateKey="$FIREBASE_PRIVATE_KEY" \
+    corsOrigins="$CORS_ORIGINS" \
     registryPassword="$GHCR_TOKEN" \
     minReplicas=0
 

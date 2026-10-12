@@ -175,14 +175,22 @@ erDiagram
     }
     Conversation {
         string id PK
+        string key UK
+        string vetFirebaseUid
+        string ownerFirebaseUid
+        string ownerPhone
+        string planStepId
         string status
         string channel
         string tutorJson
         string petJson
         string carePlanJson
+        datetime createdAt
+        datetime updatedAt
     }
     Message {
         string id PK
+        string dedupeKey UK
         string role
         string body
         string channel
@@ -212,11 +220,12 @@ Constraints and indexes created at ingest / first cache / first conversation:
 - `treatment_id` unique on `Treatment.id`
 - vector index `guideline_index` on `GuidelineChunk.embedding` (768-d, cosine)
 - `cached_care_plan_key` unique on `CachedCarePlan.key`
-- `conversation_id`, `message_id` unique
+- `conversation_id`, `conversation_key`, `message_id`, `message_dedupe_key` unique
+- composite indexes on owner/vet Firebase UID with `updatedAt`
 
 There is **no** relationship between `Treatment` and `GuidelineChunk`. Linking is done in the application: Cypher filters the menu; the vector index retrieves prose; the LLM picks ids; the API joins them.
 
-`Conversation` stores tutor, pet, and plan as **JSON strings**. That is convenient for a POC and a poor fit for graph queries at scale.
+`Conversation` stores display snapshots for tutor, pet, and plan as JSON, but authorization and inbox lookup use first-class verified Firebase UIDs. Existing anonymous nodes are legacy and never appear in authenticated inboxes.
 
 ---
 
@@ -362,18 +371,24 @@ stateDiagram-v2
 
 ```mermaid
 sequenceDiagram
+    actor Vet
     actor Tutor
+    participant Firebase
     participant API as ConversationAPI
     participant Gemini
     participant Neo as Neo4j
     participant Store as ConvStore
 
-    Tutor->>API: POST conversations
-    API->>Gemini: generate invite reply
+    Vet->>API: POST conversations with Firebase token
+    API->>Firebase: verify vet and resolve owner phone
     API->>Store: persist conversation
-    API-->>Tutor: invited with first message
+    API-->>Vet: invited with first message
 
-    Tutor->>API: POST conversation message
+    Tutor->>API: GET conversations ordered by updatedAt
+    API->>Firebase: verify owner token
+    API->>Store: list by ownerFirebaseUid
+
+    Tutor->>API: POST message with idempotency key
     API->>Store: persist user message
     API->>Gemini: embed inbound text
     API->>Neo: vector search chunks
@@ -382,7 +397,7 @@ sequenceDiagram
     API-->>Tutor: updated status with message
 ```
 
-Channels: `api` now; `whatsapp` / `telegram` are enum values with `providerMessageId` reserved for Twilio MessageSid (or equivalent). Adapters are not implemented.
+The email/password Firebase identity is the vet; the phone Firebase identity is the tutor. Every thread stores exactly one of each. Channels `whatsapp` / `telegram` remain reserved; adapters are not implemented.
 
 ---
 

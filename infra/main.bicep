@@ -37,6 +37,15 @@ param chatModel string = 'gemini-3.5-flash-lite'
 @description('Modelo de embedding. Vira EMBED_MODEL.')
 param embedModel string = 'gemini-embedding-001'
 
+@description('ID do projeto Firebase compartilhado pelos dois clientes.')
+param firebaseProjectId string
+
+@description('E-mail da service account usada pelo Firebase Admin.')
+param firebaseClientEmail string
+
+@description('Origens web permitidas, separadas por vírgula.')
+param corsOrigins string
+
 @description('0 pausa a API. 1 deixa uma réplica no ar no dia da demo.')
 @minValue(0)
 @maxValue(1)
@@ -53,6 +62,10 @@ param neo4jPassword string
 @secure()
 @description('Personal access token clássico do GitHub com read:packages.')
 param registryPassword string
+
+@secure()
+@description('Chave privada PEM da service account Firebase.')
+param firebasePrivateKey string
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
@@ -101,6 +114,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'ghcr-pull'
           value: registryPassword
         }
+        {
+          name: 'firebase-private-key'
+          value: firebasePrivateKey
+        }
       ]
     }
     template: {
@@ -141,6 +158,26 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'EMBED_MODEL'
               value: embedModel
             }
+            {
+              name: 'FIREBASE_PROJECT_ID'
+              value: firebaseProjectId
+            }
+            {
+              name: 'FIREBASE_CLIENT_EMAIL'
+              value: firebaseClientEmail
+            }
+            {
+              name: 'FIREBASE_PRIVATE_KEY'
+              secretRef: 'firebase-private-key'
+            }
+            {
+              name: 'CORS_ORIGINS'
+              value: corsOrigins
+            }
+            {
+              name: 'GEMINI_TIMEOUT_MS'
+              value: '20000'
+            }
           ]
           probes: [
             {
@@ -173,6 +210,16 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       scale: {
         minReplicas: minReplicas
         maxReplicas: 1
+        rules: [
+          {
+            name: 'http-concurrency'
+            http: {
+              metadata: {
+                concurrentRequests: '10'
+              }
+            }
+          }
+        ]
       }
     }
   }

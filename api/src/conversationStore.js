@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import neo4j from "neo4j-driver";
+
 import { getDriver } from "./neo4j.js";
 
 function cloneConversation(conversation) {
@@ -12,12 +14,36 @@ function nowIso() {
 
 export function createMemoryConversationStore() {
   const conversations = new Map();
+  const conversationKeys = new Map();
 
   return {
-    async create({ tutor, pet, carePlan, channel, status }) {
+    async create({
+      key,
+      vetFirebaseUid,
+      ownerFirebaseUid,
+      ownerPhone,
+      tutor,
+      pet,
+      carePlan,
+      planStepId,
+      channel,
+      status,
+    }) {
+      const existingId = conversationKeys.get(key);
+      if (existingId) {
+        return {
+          conversation: cloneConversation(conversations.get(existingId)),
+          created: false,
+        };
+      }
       const createdAt = nowIso();
       const conversation = {
         id: randomUUID(),
+        key,
+        vetFirebaseUid,
+        ownerFirebaseUid,
+        ownerPhone,
+        planStepId,
         status,
         channel,
         tutor,
@@ -26,9 +52,11 @@ export function createMemoryConversationStore() {
         createdAt,
         updatedAt: createdAt,
         messages: [],
+        pendingTurnKey: null,
       };
       conversations.set(conversation.id, conversation);
-      return cloneConversation(conversation);
+      conversationKeys.set(key, conversation.id);
+      return { conversation: cloneConversation(conversation), created: true };
     },
 
     async get(id) {
@@ -36,11 +64,41 @@ export function createMemoryConversationStore() {
       return found ? cloneConversation(found) : null;
     },
 
-    async appendMessage(conversationId, { role, body, channel, providerMessageId }) {
+    async list({ identityField, uid, limit, cursor }) {
+      return [...conversations.values()]
+        .filter((conversation) => conversation[identityField] === uid)
+        .filter((conversation) => {
+          if (!cursor) return true;
+          return (
+            conversation.updatedAt < cursor.updatedAt ||
+            (conversation.updatedAt === cursor.updatedAt &&
+              conversation.id < cursor.id)
+          );
+        })
+        .sort(
+          (left, right) =>
+            right.updatedAt.localeCompare(left.updatedAt) ||
+            right.id.localeCompare(left.id),
+        )
+        .slice(0, limit)
+        .map((conversation) => cloneConversation(conversation));
+    },
+
+    async appendMessage(
+      conversationId,
+      { role, body, channel, providerMessageId, dedupeKey },
+    ) {
       const conversation = conversations.get(conversationId);
       if (!conversation) return null;
+      const found = conversation.messages.find(
+        (message) => message.dedupeKey === dedupeKey,
+      );
+      if (found) {
+        return { message: structuredClone(found), created: false };
+      }
       const message = {
         id: randomUUID(),
+        dedupeKey,
         role,
         body,
         channel: channel ?? conversation.channel,
@@ -49,7 +107,21 @@ export function createMemoryConversationStore() {
       };
       conversation.messages.push(message);
       conversation.updatedAt = message.createdAt;
-      return structuredClone(message);
+      return { message: structuredClone(message), created: true };
+    },
+
+    async acquireTurn(conversationId, turnKey) {
+      const conversation = conversations.get(conversationId);
+      if (!conversation || conversation.pendingTurnKey) return false;
+      conversation.pendingTurnKey = turnKey;
+      return true;
+    },
+
+    async releaseTurn(conversationId, turnKey) {
+      const conversation = conversations.get(conversationId);
+      if (conversation?.pendingTurnKey === turnKey) {
+        conversation.pendingTurnKey = null;
+      }
     },
 
     async updateStatus(conversationId, status) {
@@ -74,6 +146,22 @@ async function ensureConversationConstraint(session) {
     CREATE CONSTRAINT message_id IF NOT EXISTS
     FOR (m:Message) REQUIRE m.id IS UNIQUE
   `);
+  await session.run(`
+    CREATE CONSTRAINT conversation_key IF NOT EXISTS
+    FOR (c:Conversation) REQUIRE c.key IS UNIQUE
+  `);
+  await session.run(`
+    CREATE CONSTRAINT message_dedupe_key IF NOT EXISTS
+    FOR (m:Message) REQUIRE m.dedupeKey IS UNIQUE
+  `);
+  await session.run(`
+    CREATE INDEX conversation_owner_updated IF NOT EXISTS
+    FOR (c:Conversation) ON (c.ownerFirebaseUid, c.updatedAt)
+  `);
+  await session.run(`
+    CREATE INDEX conversation_vet_updated IF NOT EXISTS
+    FOR (c:Conversation) ON (c.vetFirebaseUid, c.updatedAt)
+  `);
   conversationConstraintReady = true;
 }
 
@@ -88,6 +176,11 @@ function conversationFromNode(node, messages = []) {
   const props = node.properties;
   return {
     id: props.id,
+    key: props.key,
+    vetFirebaseUid: props.vetFirebaseUid,
+    ownerFirebaseUid: props.ownerFirebaseUid,
+    ownerPhone: props.ownerPhone,
+    planStepId: props.planStepId,
     status: props.status,
     channel: props.channel,
     tutor: JSON.parse(props.tutorJson),
@@ -96,6 +189,7 @@ function conversationFromNode(node, messages = []) {
     createdAt: toIso(props.createdAt),
     updatedAt: toIso(props.updatedAt),
     messages,
+    pendingTurnKey: props.pendingTurnKey || null,
   };
 }
 
@@ -103,6 +197,7 @@ function messageFromNode(node) {
   const props = node.properties;
   return {
     id: props.id,
+    dedupeKey: props.dedupeKey,
     role: props.role,
     body: props.body,
     channel: props.channel,
@@ -130,33 +225,62 @@ export function createNeo4jConversationStore({ getSession } = {}) {
   }
 
   return {
-    async create({ tutor, pet, carePlan, channel, status }) {
+    async create({
+      key,
+      vetFirebaseUid,
+      ownerFirebaseUid,
+      ownerPhone,
+      tutor,
+      pet,
+      carePlan,
+      planStepId,
+      channel,
+      status,
+    }) {
       const id = randomUUID();
+      const createToken = randomUUID();
       return withSession(async (session) => {
         const result = await session.run(
           `
-          CREATE (c:Conversation {
-            id: $id,
-            status: $status,
-            channel: $channel,
-            tutorJson: $tutorJson,
-            petJson: $petJson,
-            carePlanJson: $carePlanJson,
-            createdAt: datetime(),
-            updatedAt: datetime()
-          })
-          RETURN c
+          MERGE (c:Conversation {key: $key})
+          ON CREATE SET
+            c.id = $id,
+            c.vetFirebaseUid = $vetFirebaseUid,
+            c.ownerFirebaseUid = $ownerFirebaseUid,
+            c.ownerPhone = $ownerPhone,
+            c.planStepId = $planStepId,
+            c.status = $status,
+            c.channel = $channel,
+            c.tutorJson = $tutorJson,
+            c.petJson = $petJson,
+            c.carePlanJson = $carePlanJson,
+            c.createdAt = datetime(),
+            c.updatedAt = datetime(),
+            c.createToken = $createToken
+          WITH c, c.createToken = $createToken AS created
+          REMOVE c.createToken
+          RETURN c, created
           `,
           {
             id,
+            key,
+            vetFirebaseUid,
+            ownerFirebaseUid,
+            ownerPhone,
+            planStepId,
             status,
             channel,
+            createToken,
             tutorJson: JSON.stringify(tutor),
             petJson: JSON.stringify(pet),
             carePlanJson: JSON.stringify(carePlan),
           },
         );
-        return conversationFromNode(result.records[0].get("c"), []);
+        const record = result.records[0];
+        return {
+          conversation: conversationFromNode(record.get("c"), []),
+          created: record.get("created"),
+        };
       });
     },
 
@@ -182,26 +306,79 @@ export function createNeo4jConversationStore({ getSession } = {}) {
       });
     },
 
-    async appendMessage(conversationId, { role, body, channel, providerMessageId }) {
+    async list({ identityField, uid, limit, cursor }) {
+      if (!["ownerFirebaseUid", "vetFirebaseUid"].includes(identityField)) {
+        throw new Error("Campo de identidade inválido");
+      }
+      return withSession(async (session) => {
+        const cursorFilter = cursor
+          ? `AND (
+              c.updatedAt < datetime($cursorUpdatedAt)
+              OR (c.updatedAt = datetime($cursorUpdatedAt) AND c.id < $cursorId)
+            )`
+          : "";
+        const result = await session.run(
+          `
+          MATCH (c:Conversation)
+          WHERE c.${identityField} = $uid
+          ${cursorFilter}
+          OPTIONAL MATCH (m:Message)-[:IN]->(c)
+          WITH c, m
+          ORDER BY m.createdAt DESC, m.id DESC
+          WITH c, collect(m)[0] AS lastMessage
+          RETURN c, lastMessage
+          ORDER BY c.updatedAt DESC, c.id DESC
+          LIMIT $limit
+          `,
+          {
+            uid,
+            limit: neo4j.int(limit),
+            cursorUpdatedAt: cursor?.updatedAt ?? null,
+            cursorId: cursor?.id ?? null,
+          },
+        );
+        return result.records.map((record) => {
+          const message = record.get("lastMessage");
+          return conversationFromNode(
+            record.get("c"),
+            message?.properties?.id ? [messageFromNode(message)] : [],
+          );
+        });
+      });
+    },
+
+    async appendMessage(
+      conversationId,
+      { role, body, channel, providerMessageId, dedupeKey },
+    ) {
       const id = randomUUID();
+      const createToken = randomUUID();
       return withSession(async (session) => {
         const result = await session.run(
           `
           MATCH (c:Conversation {id: $conversationId})
-          CREATE (m:Message {
-            id: $id,
-            role: $role,
-            body: $body,
-            channel: $channel,
-            providerMessageId: $providerMessageId,
-            createdAt: datetime()
-          })-[:IN]->(c)
-          SET c.updatedAt = datetime()
-          RETURN m
+          MERGE (m:Message {dedupeKey: $dedupeKey})
+          ON CREATE SET
+            m.id = $id,
+            m.role = $role,
+            m.body = $body,
+            m.channel = $channel,
+            m.providerMessageId = $providerMessageId,
+            m.createdAt = datetime(),
+            m.createToken = $createToken
+          MERGE (m)-[:IN]->(c)
+          WITH c, m, m.createToken = $createToken AS created
+          FOREACH (_ IN CASE WHEN created THEN [1] ELSE [] END |
+            SET c.updatedAt = m.createdAt
+          )
+          REMOVE m.createToken
+          RETURN m, created
           `,
           {
             conversationId,
             id,
+            dedupeKey,
+            createToken,
             role,
             body,
             channel: channel ?? "api",
@@ -210,7 +387,38 @@ export function createNeo4jConversationStore({ getSession } = {}) {
         );
         const record = result.records[0];
         if (!record) return null;
-        return messageFromNode(record.get("m"));
+        return {
+          message: messageFromNode(record.get("m")),
+          created: record.get("created"),
+        };
+      });
+    },
+
+    async acquireTurn(conversationId, turnKey) {
+      return withSession(async (session) => {
+        const result = await session.run(
+          `
+          MATCH (c:Conversation {id: $conversationId})
+          WHERE c.pendingTurnKey IS NULL
+          SET c.pendingTurnKey = $turnKey
+          RETURN c.id AS id
+          `,
+          { conversationId, turnKey },
+        );
+        return result.records.length === 1;
+      });
+    },
+
+    async releaseTurn(conversationId, turnKey) {
+      return withSession(async (session) => {
+        await session.run(
+          `
+          MATCH (c:Conversation {id: $conversationId})
+          WHERE c.pendingTurnKey = $turnKey
+          REMOVE c.pendingTurnKey
+          `,
+          { conversationId, turnKey },
+        );
       });
     },
 

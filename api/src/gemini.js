@@ -28,14 +28,24 @@ function delay(ms) {
 }
 
 async function postGemini(url, body) {
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": config.gemini.apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": config.gemini.apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.limits.geminiTimeoutMs),
+    });
+  } catch (error) {
+    if (error.name === "TimeoutError") {
+      const timeout = new Error("Gemini excedeu o tempo limite");
+      timeout.status = 504;
+      throw timeout;
+    }
+    throw error;
+  }
 }
 
 async function geminiFetch(url, body) {
