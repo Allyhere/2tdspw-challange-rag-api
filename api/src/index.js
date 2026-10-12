@@ -13,7 +13,7 @@ const server = app.listen(config.port, () => {
       console.error(
         "Neo4j not reachable at boot:",
         error.message,
-        "— If Aura Free, resume the instance and wait until the hostname resolves. NEO4J_URI must be the Connect URI (bolt+s://….databases.neo4j.io).",
+        "— If Aura Free, resume the instance and wait until the hostname resolves. NEO4J_URI must be the Connect URI (neo4j+s://….databases.neo4j.io).",
       );
     });
 });

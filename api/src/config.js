@@ -13,9 +13,13 @@ export function normalizeNeo4jUri(raw) {
     const isAura =
       host.endsWith(".databases.neo4j.io") || host.endsWith(".neo4j.io");
     if (isAura) {
-      // Aura is TLS-only. Routing (neo4j://) discovery fails on many PaaS
-      // networks; bolt+s talks to the instance directly.
-      parsed.protocol = parsed.protocol.includes("ssc") ? "bolt+ssc:" : "bolt+s:";
+      // Aura only serves the database on the routing URI. bolt+s authenticates
+      // and then reports the database as missing.
+      if (parsed.protocol === "bolt+ssc:" || parsed.protocol === "neo4j+ssc:") {
+        parsed.protocol = "neo4j+ssc:";
+      } else {
+        parsed.protocol = "neo4j+s:";
+      }
     }
     return parsed.toString().replace(/\/$/, "");
   } catch {

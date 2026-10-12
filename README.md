@@ -4,6 +4,8 @@ Serviço em português brasileiro que sugere um **plano de cuidados** a partir d
 
 A ideia do projeto é mostrar GraphRAG na prática: o modelo de linguagem **não inventa tratamentos**. Ele só escolhe itens que existem no catálogo da clínica (`api/data/clinica-catalogo.csv`). Textos em `api/data/docs/` viram embeddings no grafo; as fontes usadas voltam no JSON da resposta.
 
+O Compose é o ambiente local. Para a demo no Azure, veja [Hospedagem da demo](#hospedagem-da-demo).
+
 ---
 
 ## Como usar
@@ -176,6 +178,7 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 | `api/data/clinica-catalogo.csv` | Menu real da clínica (ficção). |
 | `api/data/docs/*.md` | Resumos em pt-BR com URL da fonte. |
 | `scripts/harvest-allowlist.mjs` | Dry-run: imprime URLs de hosts permitidos (não faz crawl). |
+| `infra/main.bicep` | Container App da demo: uma réplica, pausa com `minReplicas=0`. |
 
 ---
 
@@ -338,3 +341,101 @@ curl -sf -X POST http://localhost:3000/v1/ingest
 ```
 
 (Ou `docker compose up --force-recreate --no-deps seed`, ou `npm run seed` na pasta `api`.)
+
+---
+
+## Hospedagem da demo
+
+O Compose sobe API, Neo4j e seed na sua máquina. Na nuvem entra só a API, no Azure Container Apps, usando o Aura que já está no ar e o Gemini. O arquivo [`infra/main.bicep`](infra/main.bicep) implanta no grupo `rg-veti` que já existe: um ambiente Consumption e o app `veti-rag-api`. O site Free `veti-api-nyhmyyhlqmwgk` permanece no plano F1.
+
+A região é **Chile Central**. A assinatura de estudante aceita Chile Central, East US 2, South Africa North, Canada Central e Spain Central. Se o deploy em Chile Central for recusado por cota, troque `location` para `eastus2` em [`infra/main.bicepparam`](infra/main.bicepparam).
+
+O app tem 0,5 vCPU, 1 GiB e no máximo 1 réplica. `minReplicas=0` pausa o processo: a URL fica, e a primeira chamada depois da pausa espera o container subir. `minReplicas=1` deixa uma réplica ligada o dia da aula.
+
+`GEMINI_API_KEY`, `NEO4J_PASSWORD` e `GHCR_TOKEN` são parâmetros seguros. O arquivo de parâmetros não guarda esses valores. O Container App autentica o pull no GHCR mesmo com o pacote público. `GHCR_TOKEN` é um personal access token clássico com o escopo `read:packages`.
+
+### 1. Registrar o provider
+
+Uma vez na assinatura:
+
+```bash
+az provider register --namespace Microsoft.App --wait
+```
+
+### 2. Publicar a imagem
+
+Na raiz do repositório. O build precisa ser `linux/amd64`, sem o atestado que o Docker acrescenta no Mac. A [documentação de containers](https://learn.microsoft.com/azure/container-apps/containers) pede imagem `linux/amd64` e uma tag única, não `latest`. Crie um [token clássico](https://github.com/settings/tokens/new) com `read:packages` e exporte-o como `GHCR_TOKEN`. Não cole o token no chat.
+
+```bash
+gh auth login -h github.com -s write:packages
+docker build --platform linux/amd64 --provenance=false --sbom=false -t ghcr.io/allyhere/veti-rag-api:demo .
+docker push ghcr.io/allyhere/veti-rag-api:demo
+printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u allyhere --password-stdin
+docker pull ghcr.io/allyhere/veti-rag-api:demo
+```
+
+`containerImage` em `infra/main.bicepparam` é `ghcr.io/allyhere/veti-rag-api:demo`.
+
+### 3. Implantar pausado
+
+Na raiz. O `NEO4J_URI` do `.env` tem de ser a URI de conexão do Aura (`neo4j+s://….databases.neo4j.io`). A API mantém `neo4j+s://`.
+
+O Bicep cria o ambiente e o app. O pull da imagem no GHCR segue o [guia de GHCR](https://learn.microsoft.com/azure/container-apps/github-actions): mesmo um pacote público precisa de usuário e token, gravados com `az containerapp registry set` antes de trocar a imagem. A extensão da CLI é a do [quickstart](https://learn.microsoft.com/azure/container-apps/get-started-existing-container-image).
+
+```bash
+az extension add --name containerapp --upgrade
+
+set -a
+source .env
+set +a
+
+az deployment group create \
+  --resource-group rg-veti \
+  --name veti-rag \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam \
+  --parameters \
+    geminiApiKey="$GEMINI_API_KEY" \
+    neo4jPassword="$NEO4J_PASSWORD" \
+    neo4jUri="$NEO4J_URI" \
+    registryPassword="$GHCR_TOKEN" \
+    minReplicas=0
+
+az containerapp registry set \
+  --name veti-rag-api \
+  --resource-group rg-veti \
+  --server ghcr.io \
+  --username allyhere \
+  --password "$GHCR_TOKEN"
+
+az containerapp update \
+  --name veti-rag-api \
+  --resource-group rg-veti \
+  --image ghcr.io/allyhere/veti-rag-api:demo \
+  --min-replicas 1 \
+  --max-replicas 1
+```
+
+`az containerapp show -g rg-veti -n veti-rag-api --query properties.configuration.ingress.fqdn -o tsv` devolve o hostname.
+
+### 4. Manhã da demo
+
+1. Retome a instância no console do Aura e espere o hostname resolver. Depois de alguns dias parada, o DNS falha até a retomada.
+2. Ligue uma réplica: `az containerapp update -g rg-veti -n veti-rag-api --min-replicas 1 --max-replicas 1`.
+3. Confira:
+
+```bash
+curl -sf "https://<fqdn>/health"
+```
+
+4. Se o grafo estiver vazio, ingira com a réplica no ar:
+
+```bash
+curl -sf -X POST "https://<fqdn>/v1/ingest"
+```
+
+Na pasta `api`, `npm run seed` faz o mesmo ingest desde que o `.env` aponte para o Aura.
+
+### 5. Depois da aula
+
+`az containerapp update -g rg-veti -n veti-rag-api --min-replicas 0 --max-replicas 1` pausa a API. Para parar o banco também, pause a instância no console do Aura.
