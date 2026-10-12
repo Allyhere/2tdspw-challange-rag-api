@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { apiReference } from "@scalar/express-api-reference";
 import { z } from "zod";
 
 import { config } from "./config.js";
@@ -11,6 +12,7 @@ import { createConversations } from "./conversation.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { runIngest as defaultRunIngest } from "./ingest.js";
 import { formatServerTiming, generateCarePlan } from "./rag.js";
+import { openApiDocument } from "./openapi.js";
 import {
   conversationIntakeSchema,
   conversationListSchema,
@@ -52,6 +54,17 @@ export function createApp({
       embedModel: config.gemini.embedModel,
     });
   });
+
+  app.get("/openapi.json", (_req, res) => {
+    res.json(openApiDocument);
+  });
+
+  app.use(
+    "/docs",
+    apiReference({
+      content: openApiDocument,
+    }),
+  );
 
   app.post("/v1/care-plan", async (req, res) => {
     console.log("POST /v1/care-plan", req.body?.name, req.body?.breed);

@@ -334,6 +334,25 @@ Erros úteis:
 | **429** | Limite por Firebase UID + IP excedido. |
 | **502** | Falha ao gerar o turno (Gemini). |
 
+### OpenAPI e documentação interativa
+
+A especificação OpenAPI 3.1 é gerada em runtime a partir dos schemas Zod com [`@asteasolutions/zod-to-openapi`](https://github.com/asteasolutions/zod-to-openapi); não existe YAML para manter manualmente. O Scalar renderiza a referência interativa:
+
+- Local: `http://localhost:3000/docs`
+- JSON local: `http://localhost:3000/openapi.json`
+- Azure: `https://veti-rag-api.livelystone-4391080e.chilecentral.azurecontainerapps.io/docs`
+- JSON Azure: `https://veti-rag-api.livelystone-4391080e.chilecentral.azurecontainerapps.io/openapi.json`
+
+O botão de autenticação da referência aceita o Firebase ID token. Para gerar tipos em outro app:
+
+```bash
+npx openapi-typescript \
+  https://veti-rag-api.livelystone-4391080e.chilecentral.azurecontainerapps.io/openapi.json \
+  -o src/lib/api/veti-rag.generated.ts
+```
+
+Os testes falham se uma rota pública, segurança Firebase ou restrição importante deixar de aparecer no contrato.
+
 ---
 
 ## Dados
@@ -363,6 +382,8 @@ curl -sf -X POST http://localhost:3000/v1/ingest
 
 O Compose sobe API, Neo4j e seed na sua máquina. Na nuvem entra só a API, no Azure Container Apps, usando o Aura que já está no ar e o Gemini. O arquivo [`infra/main.bicep`](infra/main.bicep) implanta no grupo `rg-veti` que já existe: um ambiente Consumption e o app `veti-rag-api`. O site Free `veti-api-nyhmyyhlqmwgk` permanece no plano F1.
 
+O deployment existente está na assinatura `22d97a05-d599-4949-a977-04132c4080e3`, resource group `rg-veti`, como `Microsoft.App/containerApps/veti-rag-api`. O script [`scripts/play-pause.sh`](scripts/play-pause.sh) fixa essa assinatura por padrão para não depender do contexto atual da Azure CLI; `AZURE_SUBSCRIPTION_ID` e `AZURE_RESOURCE_GROUP` permitem override.
+
 A região é **Chile Central**. A assinatura de estudante aceita Chile Central, East US 2, South Africa North, Canada Central e Spain Central. Se o deploy em Chile Central for recusado por cota, troque `location` para `eastus2` em [`infra/main.bicepparam`](infra/main.bicepparam).
 
 O app tem 0,5 vCPU, 1 GiB, regra HTTP de 10 requisições concorrentes e no máximo 1 réplica. `minReplicas=0` pausa o processo: a URL fica, e a primeira chamada depois da pausa espera o container subir. `minReplicas=1` deixa uma réplica ligada o dia da aula.
@@ -376,7 +397,10 @@ Para cerca de 300 usuários/dia, o turno fica síncrono e sem fila: há limite p
 Uma vez na assinatura:
 
 ```bash
-az provider register --namespace Microsoft.App --wait
+az provider register \
+  --subscription 22d97a05-d599-4949-a977-04132c4080e3 \
+  --namespace Microsoft.App \
+  --wait
 ```
 
 ### 2. Publicar a imagem
@@ -393,6 +417,18 @@ docker pull ghcr.io/allyhere/veti-rag-api:demo
 
 `containerImage` em `infra/main.bicepparam` é `ghcr.io/allyhere/veti-rag-api:demo`.
 
+Para executar login, build `linux/amd64`, push, atualização do parâmetro, deploy e verificações em uma chamada:
+
+```bash
+./build.sh
+```
+
+O script cria uma tag única. Para escolher a imagem explicitamente:
+
+```bash
+./build.sh ghcr.io/allyhere/veti-rag-api:minha-tag
+```
+
 ### 3. Implantar pausado
 
 Na raiz. O `NEO4J_URI` do `.env` tem de ser a URI de conexão do Aura (`neo4j+s://….databases.neo4j.io`). A API mantém `neo4j+s://`.
@@ -407,6 +443,7 @@ source .env
 set +a
 
 az deployment group create \
+  --subscription 22d97a05-d599-4949-a977-04132c4080e3 \
   --resource-group rg-veti \
   --name veti-rag \
   --template-file infra/main.bicep \
@@ -423,6 +460,7 @@ az deployment group create \
     minReplicas=0
 
 az containerapp registry set \
+  --subscription 22d97a05-d599-4949-a977-04132c4080e3 \
   --name veti-rag-api \
   --resource-group rg-veti \
   --server ghcr.io \
@@ -430,6 +468,7 @@ az containerapp registry set \
   --password "$GHCR_TOKEN"
 
 az containerapp update \
+  --subscription 22d97a05-d599-4949-a977-04132c4080e3 \
   --name veti-rag-api \
   --resource-group rg-veti \
   --image ghcr.io/allyhere/veti-rag-api:demo \

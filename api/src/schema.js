@@ -101,6 +101,60 @@ export const conversationListSchema = z.object({
   cursor: z.string().min(1).optional(),
 });
 
+export const conversationStatusSchema = z.enum([
+  "invited",
+  "accepted",
+  "declined",
+]);
+
+export const publicMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(["assistant", "user"]),
+  text: z.string(),
+  createdAt: z.string().datetime({ offset: true }),
+  providerMessageId: z.string().optional(),
+});
+
+export const conversationStartResponseSchema = z.object({
+  id: z.string(),
+  status: conversationStatusSchema,
+  message: publicMessageSchema,
+});
+
+export const conversationResponseSchema = z.object({
+  id: z.string(),
+  status: conversationStatusSchema,
+  channel: z.enum(["api", "whatsapp", "telegram"]),
+  tutor: conversationIntakeSchema.shape.tutor,
+  pet: conversationPetSchema,
+  carePlan: z.array(carePlanItemSchema),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }),
+  messages: z.array(publicMessageSchema),
+});
+
+export const conversationSummarySchema = z.object({
+  id: z.string(),
+  status: conversationStatusSchema,
+  channel: z.enum(["api", "whatsapp", "telegram"]),
+  tutor: conversationIntakeSchema.shape.tutor,
+  pet: conversationPetSchema,
+  planStep: carePlanItemSchema.extend({ id: z.string() }),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }),
+  lastMessage: publicMessageSchema.nullable(),
+});
+
+export const conversationListResponseSchema = z.object({
+  items: z.array(conversationSummarySchema),
+  nextCursor: z.string().nullable(),
+});
+
+export const errorResponseSchema = z.object({
+  message: z.string(),
+  issues: z.unknown().optional(),
+});
+
 export const llmTurnSchema = z.object({
   reply: z.string().min(1),
   intent: z.enum(["invite", "accept", "decline", "question", "other"]),

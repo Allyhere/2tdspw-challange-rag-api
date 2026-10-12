@@ -74,6 +74,28 @@ test("POST /v1/ingest rejects an invalid payload", async () => {
   });
 });
 
+test("GET /openapi.json serves the generated contract", async () => {
+  await withServer(createApp(), async (base) => {
+    const response = await fetch(`${base}/openapi.json`);
+    const document = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(document.openapi, "3.1.0");
+    assert.ok(document.paths["/v1/conversations/{id}/messages"].post);
+  });
+});
+
+test("GET /docs serves the interactive API reference", async () => {
+  await withServer(createApp(), async (base) => {
+    const response = await fetch(`${base}/docs`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /text\/html/);
+    assert.match(html, /Veti GraphRAG API/);
+  });
+});
+
 const INTAKE = {
   tutor: { name: "Ana", phone: "+5511999999999" },
   pet: {
