@@ -69,8 +69,21 @@ echo "Implantando no Azure..."
 scripts/play-pause.sh play
 
 echo "Verificando saúde..."
-curl -sf --max-time 60 "$RAG_URL/health"
-echo
+healthy=false
+for attempt in {1..18}; do
+  if curl -sf --max-time 10 "$RAG_URL/health"; then
+    echo
+    healthy=true
+    break
+  fi
+  echo "API ainda não está pronta (tentativa $attempt/18); tentando novamente em 5s..."
+  sleep 5
+done
+
+if [[ "$healthy" != true ]]; then
+  echo "A API não ficou saudável após o deploy." >&2
+  exit 1
+fi
 
 echo "Verificando proteção Firebase..."
 response="$(

@@ -4,7 +4,7 @@ param location = 'chilecentral'
 param appName = 'veti-rag-api'
 param environmentName = 'veti-rag-env'
 // Troque pela imagem publicada no GHCR ou no Docker Hub.
-param containerImage = 'ghcr.io/allyhere/veti-rag-api:auth-20261012-200122'
+param containerImage = 'ghcr.io/allyhere/veti-rag-api:docs-fix-20261012-2036'
 param registryServer = 'ghcr.io'
 param registryUsername = 'allyhere'
 param neo4jUri = readEnvironmentVariable('NEO4J_URI', 'neo4j+s://xxxxxxxx.databases.neo4j.io')
