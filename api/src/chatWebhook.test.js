@@ -62,22 +62,23 @@ test("the worker posts the stored tutor message and retries the same body", asyn
   assert.equal(result.message.role, "assistant");
 
   await worker.tick();
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 3);
   await worker.tick();
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 3);
 
   clock += 1000;
   await worker.tick();
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].url, calls[0].url);
-  assert.deepEqual(calls[1].init.body, calls[0].init.body);
+  assert.equal(calls.length, 4);
+  assert.equal(calls[3].url, calls[0].url);
+  assert.deepEqual(calls[3].init.body, calls[0].init.body);
   assert.equal(calls[0].init.headers["x-chat-webhook-secret"], "nest-secret");
-  assert.equal(calls[0].init.body.text, "O que é a V10?");
-  assert.equal(calls[0].init.body.tutorName, "Ana");
-  assert.equal(calls[0].init.body.petName, "Thor");
-  assert.equal(calls[0].init.body.vetFirebaseUid, VET.uid);
-  assert.equal(calls[0].init.body.conversationId, started.id);
+  const tutorMessage = calls.find((call) => call.init.body.text === "O que é a V10?");
+  assert.equal(tutorMessage.init.body.audience, "vet");
+  assert.equal(tutorMessage.init.body.tutorName, "Ana");
+  assert.equal(tutorMessage.init.body.petName, "Thor");
+  assert.equal(tutorMessage.init.body.vetFirebaseUid, VET.uid);
+  assert.equal(tutorMessage.init.body.conversationId, started.id);
 
   await worker.tick();
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 4);
 });

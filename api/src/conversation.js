@@ -278,11 +278,13 @@ export function createConversations({
       status: "invited",
     });
     const conversation = created.conversation;
+    const invite = `Oi ${intake.tutor.name}! O cuidado de ${intake.pet.name} é ${intake.planStep.planItemName}. Você aceita seguir com esta etapa do plano?`;
     const appended = await conversationStore.appendMessage(conversation.id, {
       role: "assistant",
-      body: `Oi ${intake.tutor.name}! O cuidado de ${intake.pet.name} é ${intake.planStep.planItemName}. Você aceita seguir com esta etapa do plano?`,
+      body: invite,
       channel: conversation.channel,
       dedupeKey: `${conversation.id}:invite`,
+      webhook: tutorAudienceWebhook(conversation, invite),
     });
     return {
       id: conversation.id,
@@ -294,7 +296,20 @@ export function createConversations({
   function tutorWebhook(conversation, text) {
     if (!notifyTutorMessages) return null;
     return {
+      audience: "vet",
       vetFirebaseUid: conversation.vetFirebaseUid,
+      tutorName: conversation.tutor.name,
+      petName: conversation.pet.name,
+      text,
+    };
+  }
+
+  function tutorAudienceWebhook(conversation, text) {
+    if (!notifyTutorMessages) return null;
+    return {
+      audience: "tutor",
+      tutorFirebaseUid: conversation.ownerFirebaseUid,
+      planStepId: conversation.planStepId,
       tutorName: conversation.tutor.name,
       petName: conversation.pet.name,
       text,
@@ -354,6 +369,7 @@ export function createConversations({
       providerMessageId: providerMessageId ?? null,
       dedupeKey,
       disableAgent: true,
+      webhook: tutorAudienceWebhook(existing, text),
     });
     return {
       id: conversationId,
@@ -418,6 +434,23 @@ export function createConversations({
       throw httpError(409, "Já existe uma resposta sendo processada");
     }
 
+    const treatmentsTask = (async () => {
+      try {
+        return await loadTreatments(planNames(existing.carePlan));
+      } catch (error) {
+        console.warn("Tratamentos do plano indisponíveis:", error.message);
+        return null;
+      }
+    })();
+    const chunksTask = (async () => {
+      try {
+        return (await retrieveChunks(text)) ?? [];
+      } catch (error) {
+        console.warn("Busca de diretriz falhou:", error.message);
+        return [];
+      }
+    })();
+
     try {
       const userAppend = await storeUserMessage(
         existing,
@@ -438,23 +471,13 @@ export function createConversations({
         };
       }
 
-      let treatments = null;
-      try {
-        treatments = await loadTreatments(planNames(existing.carePlan));
-      } catch (error) {
-        console.warn("Tratamentos do plano indisponíveis:", error.message);
-      }
+      const [treatments, chunks] = await Promise.all([
+        treatmentsTask,
+        chunksTask,
+      ]);
       const rows = treatments?.length
         ? treatments
         : treatmentsFromPlan(existing.carePlan);
-
-      let chunks = [];
-      try {
-        chunks = (await retrieveChunks(text)) ?? [];
-      } catch (error) {
-        console.warn("Busca de diretriz falhou:", error.message);
-        chunks = [];
-      }
 
       const names = planNames(existing.carePlan).join(", ");
       let reply;
@@ -498,6 +521,7 @@ export function createConversations({
         body: reply,
         channel: existing.channel,
         dedupeKey: replyKey,
+        webhook: tutorAudienceWebhook(existing, reply),
       });
       return {
         id: conversationId,

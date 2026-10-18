@@ -147,25 +147,52 @@ function requestCarePlan(payload) {
   });
 }
 
+let cacheDriver;
+
 async function flushCache() {
-  const auth = Buffer.from("neo4j:password").toString("base64");
-  const response = await fetch("http://localhost:7474/db/neo4j/tx/commit", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      statements: [
-        { statement: "MATCH (c:CachedCarePlan) DETACH DELETE c" },
-      ],
-    }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `Falha ao limpar cache Neo4j: HTTP ${response.status} ${text.slice(0, 200)}`,
+  const uri = process.env.NEO4J_URI || "";
+  let host = "";
+  try {
+    host = uri ? new URL(uri).hostname : "";
+  } catch {
+    host = "";
+  }
+  const local = !host || host === "localhost" || host === "127.0.0.1";
+  if (local) {
+    const auth = Buffer.from("neo4j:password").toString("base64");
+    const response = await fetch("http://localhost:7474/db/neo4j/tx/commit", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        statements: [
+          { statement: "MATCH (c:CachedCarePlan) DETACH DELETE c" },
+        ],
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        `Falha ao limpar cache Neo4j: HTTP ${response.status} ${text.slice(0, 200)}`,
+      );
+    }
+    return;
+  }
+
+  if (!cacheDriver) {
+    const { default: neo4j } = await import(
+      new URL("../api/node_modules/neo4j-driver/lib/index.js", import.meta.url).href
     );
+    const user = process.env.NEO4J_USER || process.env.NEO4J_USERNAME || "neo4j";
+    cacheDriver = neo4j.driver(uri, neo4j.auth.basic(user, process.env.NEO4J_PASSWORD || ""));
+  }
+  const session = cacheDriver.session();
+  try {
+    await session.run("MATCH (c:CachedCarePlan) DETACH DELETE c");
+  } finally {
+    await session.close();
   }
 }
 
@@ -297,6 +324,7 @@ const history = loadHistory();
 history.push({ label, at: new Date().toISOString(), summary, rows });
 writeFileSync(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 console.log(`\nHistórico gravado em ${historyPath}`);
+if (cacheDriver) await cacheDriver.close();
 
 const previous = history.filter((entry) => entry.label !== label).at(-1);
 if (previous?.summary && summary.missMeanWallMs != null && previous.summary.missMeanWallMs != null) {

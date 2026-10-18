@@ -25,6 +25,7 @@ export function getDriver() {
         maxConnectionPoolSize: 10,
         connectionAcquisitionTimeout: 2 * 60 * 1000,
         connectionTimeout: 30 * 1000,
+        connectionLivenessCheckTimeout: 30 * 1000,
       },
     );
   }
@@ -192,16 +193,18 @@ export async function saveCachedCarePlan(pet, plan) {
   const session = getDriver().session();
   try {
     await ensureCarePlanCacheConstraint(session);
-    await session.run(
-      `
-      MERGE (c:CachedCarePlan {key: $key})
-      ON CREATE SET c.payload = $payload, c.createdAt = datetime()
-      SET c.breed = $breed, c.species = $species
-      `,
-      {
-        ...carePlanCacheIdentity(pet),
-        payload: JSON.stringify(plan),
-      },
+    await session.executeWrite((tx) =>
+      tx.run(
+        `
+        MERGE (c:CachedCarePlan {key: $key})
+        ON CREATE SET c.payload = $payload, c.createdAt = datetime()
+        SET c.breed = $breed, c.species = $species
+        `,
+        {
+          ...carePlanCacheIdentity(pet),
+          payload: JSON.stringify(plan),
+        },
+      ),
     );
   } finally {
     await session.close();

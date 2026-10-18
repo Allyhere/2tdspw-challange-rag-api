@@ -105,7 +105,7 @@ curl -sf http://localhost:3000/v1/conversations/<id> \
   -H "Authorization: Bearer $OWNER_FIREBASE_ID_TOKEN"
 ```
 
-O `idempotencyKey` evita mensagens duplicadas em retries. `providerMessageId` continua opcional para um futuro adaptador. A primeira mensagem do vet grava `role: "vet"` e passa `agentEnabled` para `false`. Enquanto o agente está desligado, a mensagem do tutor é gravada e não chama o modelo. Cada mensagem nova do tutor dispara um aviso à API Nest em segundo plano (`NEST_CHAT_WEBHOOK_URL`); a resposta HTTP do tutor não espera esse POST.
+O `idempotencyKey` evita mensagens duplicadas em retries. `providerMessageId` continua opcional para um futuro adaptador. A primeira mensagem do vet grava `role: "vet"` e passa `agentEnabled` para `false`. Enquanto o agente está desligado, a mensagem do tutor é gravada e não chama o modelo. Cada mensagem nova do tutor avisa o vet, e o convite, a resposta do agente e a mensagem do vet avisam o tutor, em segundo plano (`NEST_CHAT_WEBHOOK_URL`). A resposta HTTP não espera esse POST.
 
 ### 5. Reindexar documentos
 
@@ -236,24 +236,24 @@ payload
   │     • com dados de consulta → ignora o cache (o plano precisa refletir aquele atendimento)
   │
   ├─ 3. Em paralelo
+  │     • Cypher: Treatments cuja espécie/idade/peso/castração batem com o pet
   │     • Gemini embeddings: vetoriza uma frase do tipo
   │       "cachorro da raça Labrador, 28.5kg, 3 anos, macho, não castrado. Diagnóstico: …"
-  │     • Cypher: Treatments cuja espécie/idade/peso/castração batem com o pet
+  │       e em seguida busca os `VECTOR_K` chunks mais próximos (padrão 8, cosine) + Source
+  │     • LLM (gemini-3.5-flash-lite, temperature 0, JSON schema), assim que o catálogo chega
+  │       recebe o pet e o catálogo filtrado; responde {"ids":["v10","antirabica",…]}
+  │       Os chunks não entram no prompt: só viram `sources`. Falha de embedding zera as fontes
+  │       e o LLM continua.
   │
-  ├─ 4. Busca vetorial: os `VECTOR_K` chunks mais próximos (padrão 8, cosine) + Source ligada
-  │
-  ├─ 5. LLM (gemini-3.5-flash-lite, temperature 0, JSON schema)
-  │     recebe o pet e o catálogo filtrado; responde {"ids":["v10","antirabica",…]}
-  │
-  ├─ 6. Grounding
+  ├─ 4. Grounding
   │     cada id/nome é casado com o Treatment; metadados vêm do CSV, não do modelo
   │     se o modelo falhar ou não copiar ids → usa até 8 itens do filtro Cypher
   │
-  └─ 7. Monta a descrição em pt-BR, devolve sources únicas e grava o cache
-        (só quando não houve contexto de consulta)
+  └─ 5. Monta a descrição em pt-BR e devolve sources únicas.
+        A gravação do cache (só sem contexto de consulta) não bloqueia a resposta.
 ```
 
-Tempos de cada etapa vão no header `Server-Timing` (`cache`, `embed`, `vector`, `catalog`, `llm`, `post`, `total`).
+Tempos de cada etapa vão no header `Server-Timing` (`cache`, `embed`, `vector`, `catalog`, `llm`, `post`, `total`). Embed, busca vetorial e LLM correm juntos, então a soma dessas durações pode passar de `total`.
 
 ### Por que o modelo não inventa o menu
 

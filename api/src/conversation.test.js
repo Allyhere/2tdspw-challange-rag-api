@@ -484,7 +484,8 @@ test("a new tutor message is queued for Nest once and vet messages are not", asy
     idempotencyKey: "vet-no-webhook",
     actor: VET,
   });
-  assert.equal((await store.listDueWebhooks(new Date().toISOString())).length, 0);
+  const beforeTutor = await store.listDueWebhooks(new Date().toISOString());
+  assert.equal(beforeTutor.filter((job) => job.body.audience === "vet").length, 0);
   await conversations.handleInbound({
     conversationId: started.id,
     text: "Thor comeu pouco",
@@ -494,9 +495,10 @@ test("a new tutor message is queued for Nest once and vet messages are not", asy
   const silenced = await store.listDueWebhooks(new Date().toISOString());
   const savedSilenced = await conversations.get(started.id, OWNER);
   const silencedUser = savedSilenced.messages.find((message) => message.role === "user");
-  assert.equal(silenced.length, 1);
-  assert.equal(silenced[0].body.messageId, silencedUser.id);
-  assert.equal(silenced[0].body.text, "Thor comeu pouco");
+  const silencedVetJobs = silenced.filter((job) => job.body.audience === "vet");
+  assert.equal(silencedVetJobs.length, 1);
+  assert.equal(silencedVetJobs[0].body.messageId, silencedUser.id);
+  assert.equal(silencedVetJobs[0].body.text, "Thor comeu pouco");
 
   const storeWithAgent = createMemoryConversationStore();
   const agentConversations = createConversations({
@@ -521,10 +523,12 @@ test("a new tutor message is queued for Nest once and vet messages are not", asy
   const jobs = await storeWithAgent.listDueWebhooks(new Date().toISOString());
   const saved = await agentConversations.get(invited.id, OWNER);
   const userMessage = saved.messages.find((message) => message.role === "user");
+  const vetJobs = jobs.filter((job) => job.body.audience === "vet");
 
-  assert.equal(jobs.length, 1);
+  assert.equal(vetJobs.length, 1);
   assert.equal(first.message.role, "assistant");
-  assert.deepEqual(jobs[0].body, {
+  assert.deepEqual(vetJobs[0].body, {
+    audience: "vet",
     vetFirebaseUid: VET.uid,
     conversationId: invited.id,
     tutorName: "Ana",
@@ -532,5 +536,101 @@ test("a new tutor message is queued for Nest once and vet messages are not", asy
     text: "O que é a V10?",
     messageId: userMessage.id,
   });
+});
+
+test("invite, assistant reply and vet message are queued for the tutor once", async () => {
+  const store = createMemoryConversationStore();
+  const conversations = createConversations({
+    store,
+    notifyTutorMessages: true,
+    generateTurn: async () => ({ reply: "A V10 é uma vacina.", intent: "question" }),
+    retrieveChunks: async () => [],
+    loadTreatments: async () => [],
+  });
+  const started = await conversations.start(INTAKE, {
+    actor: VET,
+    owner: OWNER_RECORD,
+  });
+  const inviteJobs = await store.listDueWebhooks(new Date().toISOString());
+  const savedInvite = await conversations.get(started.id, OWNER);
+  const invite = savedInvite.messages.find((message) => message.role === "assistant");
+  assert.equal(inviteJobs.length, 1);
+  assert.deepEqual(inviteJobs[0].body, {
+    audience: "tutor",
+    tutorFirebaseUid: OWNER.uid,
+    conversationId: started.id,
+    planStepId: "step-1",
+    tutorName: "Ana",
+    petName: "Thor",
+    text: invite.text,
+    messageId: invite.id,
+  });
+
+  const request = {
+    conversationId: started.id,
+    text: "O que é a V10?",
+    idempotencyKey: "tutor-reply-once",
+    actor: OWNER,
+  };
+  await conversations.handleInbound(request);
+  const beforeReplyRetry = await store.listDueWebhooks(new Date().toISOString());
+  await conversations.handleInbound(request);
+  const afterReply = await store.listDueWebhooks(new Date().toISOString());
+  const savedReply = await conversations.get(started.id, OWNER);
+  const reply = savedReply.messages.filter((message) => message.role === "assistant").at(-1);
+  assert.equal(afterReply.length, beforeReplyRetry.length);
+  assert.deepEqual(
+    afterReply.find((job) => job.body.messageId === reply.id).body,
+    {
+      audience: "tutor",
+      tutorFirebaseUid: OWNER.uid,
+      conversationId: started.id,
+      planStepId: "step-1",
+      tutorName: "Ana",
+      petName: "Thor",
+      text: "A V10 é uma vacina.",
+      messageId: reply.id,
+    },
+  );
+
+  const vetStore = createMemoryConversationStore();
+  const vetConversations = createConversations({
+    store: vetStore,
+    notifyTutorMessages: true,
+    generateTurn: async () => ({ reply: "não deveria", intent: "question" }),
+    retrieveChunks: async () => [],
+    loadTreatments: async () => [],
+  });
+  const invited = await vetConversations.start(INTAKE, {
+    actor: VET,
+    owner: OWNER_RECORD,
+  });
+  const vetRequest = {
+    conversationId: invited.id,
+    text: "Olá, aqui é a clínica.",
+    idempotencyKey: "vet-tutor-once",
+    actor: VET,
+  };
+  await vetConversations.handleVetMessage(vetRequest);
+  const beforeVetRetry = await vetStore.listDueWebhooks(new Date().toISOString());
+  await vetConversations.handleVetMessage(vetRequest);
+  const vetJobs = await vetStore.listDueWebhooks(new Date().toISOString());
+  const savedVet = await vetConversations.get(invited.id, VET);
+  const vetMessage = savedVet.messages.find((message) => message.role === "vet");
+  assert.equal(vetJobs.length, beforeVetRetry.length);
+  assert.equal(vetJobs.filter((job) => job.body.messageId === vetMessage.id).length, 1);
+  assert.deepEqual(
+    vetJobs.find((job) => job.body.messageId === vetMessage.id).body,
+    {
+      audience: "tutor",
+      tutorFirebaseUid: OWNER.uid,
+      conversationId: invited.id,
+      planStepId: "step-1",
+      tutorName: "Ana",
+      petName: "Thor",
+      text: "Olá, aqui é a clínica.",
+      messageId: vetMessage.id,
+    },
+  );
 });
 

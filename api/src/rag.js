@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 
 import { geminiEmbed, geminiGenerateJson } from "./gemini.js";
 import {
-  getDriver,
   findTreatmentsForPet,
   getCachedCarePlan,
   saveCachedCarePlan,
@@ -279,8 +278,6 @@ export async function generateCarePlan(pet, deps = {}) {
   const generate = deps.generate ?? invokeModel;
   const readCache = deps.readCache ?? getCachedCarePlan;
   const writeCache = deps.writeCache ?? saveCachedCarePlan;
-  const verify =
-    deps.verify ?? (() => getDriver().verifyConnectivity());
 
   const totalStart = performance.now();
   const timings = emptyTimings();
@@ -307,48 +304,48 @@ export async function generateCarePlan(pet, deps = {}) {
   }
 
   const query = buildPetQuery(pet);
-  const embedStart = performance.now();
+  const sourcesTask = (async () => {
+    const embedStart = performance.now();
+    let vectorStart;
+    try {
+      const vectors = await embed(query);
+      timings.embed = roundMs(performance.now() - embedStart);
+      const [embedding] = vectors;
+      vectorStart = performance.now();
+      const found = await searchChunks(embedding);
+      timings.vector = roundMs(performance.now() - vectorStart);
+      return found;
+    } catch (error) {
+      const now = performance.now();
+      if (vectorStart == null) {
+        timings.embed = roundMs(now - embedStart);
+      } else {
+        timings.vector = roundMs(now - vectorStart);
+      }
+      console.warn("Fontes indisponíveis, seguindo sem citações:", error.message);
+      return [];
+    }
+  })();
+
   const catalogStart = performance.now();
-  const catalogPromise = findTreatments(pet);
-  let embedding;
-  try {
-    const vectors = await embed(query);
-    embedding = vectors[0];
-  } catch (error) {
-    console.warn("Embedding falhou, usando só o catálogo:", error.message);
-    const catalog = await catalogPromise;
-    timings.embed = roundMs(performance.now() - embedStart);
-    timings.catalog = roundMs(performance.now() - catalogStart);
-    if (!catalog?.length) throw emptyCatalogError();
-    const carePlan = catalogAsPlan(catalog);
-    timings.total = roundMs(performance.now() - totalStart);
-    return {
-      plan: {
-        carePlanDescription: fallbackDescription(pet, carePlan),
-        carePlan,
-        sources: [],
-      },
-      timings,
-    };
-  }
-  const catalog = await catalogPromise;
-  timings.embed = roundMs(performance.now() - embedStart);
+  const catalog = await findTreatments(pet);
   timings.catalog = roundMs(performance.now() - catalogStart);
-  if (catalog.length === 0) throw emptyCatalogError();
+  if (!catalog?.length) throw emptyCatalogError();
 
-  const vectorStart = performance.now();
-  const chunks = await searchChunks(embedding);
-  timings.vector = roundMs(performance.now() - vectorStart);
+  const llmTask = (async () => {
+    const llmStart = performance.now();
+    try {
+      const generated = await generate(pet, catalog);
+      return generated.ids ?? [];
+    } catch (error) {
+      console.warn("LLM falhou, usando só o catálogo:", error.message);
+      return [];
+    } finally {
+      timings.llm = roundMs(performance.now() - llmStart);
+    }
+  })();
 
-  let ids = [];
-  const llmStart = performance.now();
-  try {
-    const generated = await generate(pet, catalog);
-    ids = generated.ids ?? [];
-  } catch (error) {
-    console.warn("LLM falhou, usando só o catálogo:", error.message);
-  }
-  timings.llm = roundMs(performance.now() - llmStart);
+  const [chunks, ids] = await Promise.all([sourcesTask, llmTask]);
 
   let carePlan = planFromIds(ids, catalog);
   if (carePlan.length === 0) {
@@ -361,21 +358,16 @@ export async function generateCarePlan(pet, deps = {}) {
   }
 
   const postStart = performance.now();
-  try {
-    await verify();
-  } catch (error) {
-    console.warn("Neo4j reconnect:", error.message);
-  }
   const plan = {
     carePlanDescription: fallbackDescription(pet, carePlan),
     carePlan,
     sources: uniqueSources(chunks),
   };
   if (!skipCache) {
-    await writeCache(pet, {
+    writeCache(pet, {
       carePlan: plan.carePlan,
       sources: plan.sources,
-    });
+    }).catch((error) => console.warn("Cache não gravado:", error.message));
   }
   timings.post = roundMs(performance.now() - postStart);
   timings.total = roundMs(performance.now() - totalStart);

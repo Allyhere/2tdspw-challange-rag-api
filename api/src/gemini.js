@@ -67,10 +67,22 @@ async function geminiFetch(url, body) {
   return payload;
 }
 
+/**
+ * Divide cada número pelo tamanho do vetor, para ele ficar com comprimento 1.
+ * Vetor só de zeros volta igual.
+ * @param {number[]} values
+ * @returns {number[]}
+ */
 function l2Normalize(values) {
   const norm = Math.sqrt(values.reduce((sum, value) => sum + value * value, 0));
   if (!norm) return values;
   return values.map((value) => value / norm);
+}
+
+function thinkingGenerationConfig() {
+  const thinkingLevel = config.gemini.thinkingLevel;
+  if (!thinkingLevel) return {};
+  return { thinkingConfig: { thinkingLevel } };
 }
 
 export const IDS_SCHEMA = {
@@ -97,9 +109,11 @@ export async function geminiGenerateJson({
         maxOutputTokens,
         responseMimeType: "application/json",
         responseSchema,
+        ...thinkingGenerationConfig(),
       },
     },
   );
+  console.log("Gemini usage:", payload.usageMetadata);
 
   const text = payload.candidates?.[0]?.content?.parts
     ?.map((part) => part.text ?? "")

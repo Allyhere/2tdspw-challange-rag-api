@@ -31,6 +31,8 @@ FIREBASE_PROJECT_ID="$(env_value FIREBASE_PROJECT_ID)"
 FIREBASE_CLIENT_EMAIL="$(env_value FIREBASE_CLIENT_EMAIL)"
 FIREBASE_PRIVATE_KEY="$(env_value FIREBASE_PRIVATE_KEY)"
 CORS_ORIGINS="$(env_value CORS_ORIGINS)"
+NEST_CHAT_WEBHOOK_URL="$(env_value NEST_CHAT_WEBHOOK_URL)"
+NEST_CHAT_WEBHOOK_SECRET="$(env_value NEST_CHAT_WEBHOOK_SECRET)"
 
 if [[ -z "$GEMINI_API_KEY" || -z "$NEO4J_PASSWORD" || -z "$NEO4J_URI" || -z "$NEO4J_USER" || -z "$GHCR_TOKEN" || -z "$FIREBASE_PROJECT_ID" || -z "$FIREBASE_CLIENT_EMAIL" || -z "$FIREBASE_PRIVATE_KEY" || -z "$CORS_ORIGINS" ]]; then
   echo "Faltam variáveis obrigatórias de Gemini, Neo4j, GHCR, Firebase ou CORS no .env." >&2
@@ -53,6 +55,8 @@ az deployment group create \
     firebasePrivateKey="$FIREBASE_PRIVATE_KEY" \
     corsOrigins="$CORS_ORIGINS" \
     registryPassword="$GHCR_TOKEN" \
+    nestChatWebhookUrl="$NEST_CHAT_WEBHOOK_URL" \
+    nestChatWebhookSecret="$NEST_CHAT_WEBHOOK_SECRET" \
     minReplicas="$replicas" \
   --query properties.outputs.url.value \
   -o tsv

@@ -10,6 +10,9 @@ import { getDriver } from "./neo4j.js";
 const dataDir = join(dirname(fileURLToPath(import.meta.url)), "..", "data");
 const docsDir = join(dataDir, "docs");
 
+/**
+ * Faz a interpretação do CSV de tratamentos
+ */
 function parseCsv(text) {
   const [headerLine, ...lines] = text.trim().split(/\r?\n/);
   const headers = headerLine.split(",");
@@ -23,6 +26,10 @@ function parseCsv(text) {
   });
 }
 
+/**
+ * 
+ * Faz a interpretação do front matter de um arquivo markdown
+ */
 export function parseFrontMatter(markdown) {
   const match = markdown.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) {
@@ -211,6 +218,10 @@ async function removeOrphanSources(session, keepUrls) {
   return typeof removed?.toNumber === "function" ? removed.toNumber() : Number(removed || 0);
 }
 
+/**
+ * 
+ * Aqui acontece o chunking, o embedding e a persistência dos vetores no Neo4j 
+ */
 export async function ingestGuidelines(session, { force = false } = {}) {
   const files = (await readdir(docsDir)).filter((name) => name.endsWith(".md"));
   const summary = {

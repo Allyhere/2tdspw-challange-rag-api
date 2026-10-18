@@ -124,11 +124,8 @@ export function createMemoryConversationStore() {
           messageId: message.id,
           conversationId,
           body: {
-            vetFirebaseUid: webhook.vetFirebaseUid,
+            ...webhook,
             conversationId,
-            tutorName: webhook.tutorName,
-            petName: webhook.petName,
-            text: webhook.text,
             messageId: message.id,
           },
           status: "pending",
@@ -434,11 +431,8 @@ export function createNeo4jConversationStore({ getSession } = {}) {
       const webhookId = randomUUID();
       const webhookBody = webhook
         ? {
-            vetFirebaseUid: webhook.vetFirebaseUid,
+            ...webhook,
             conversationId,
-            tutorName: webhook.tutorName,
-            petName: webhook.petName,
-            text: webhook.text,
             messageId: id,
           }
         : null;
