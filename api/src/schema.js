@@ -5,6 +5,28 @@ const examEntrySchema = z.object({
   date: z.string().min(1),
 });
 
+const consultaEntrySchema = z.object({
+  data: z.string().min(1),
+  resumo: z.string().optional(),
+  diagnostico: z.string().optional(),
+});
+
+const medicamentoEntrySchema = z.object({
+  nome: z.string().min(1),
+  desde: z.string().optional(),
+  ate: z.string().optional(),
+});
+
+const vacinaAplicadaEntrySchema = z.object({
+  nome: z.string().min(1),
+  data: z.string().min(1),
+});
+
+const comportamentoEntrySchema = z.object({
+  relato: z.string().min(1),
+  data: z.string().optional(),
+});
+
 export const petInputSchema = z.object({
   name: z.string().min(1),
   breed: z.string().min(1),
@@ -18,6 +40,10 @@ export const petInputSchema = z.object({
   prescription: z.array(z.string()).optional(),
   exams: z.array(examEntrySchema).optional(),
   currentTreatments: z.array(z.string()).optional(),
+  consultas: z.array(consultaEntrySchema).optional(),
+  medicamentos: z.array(medicamentoEntrySchema).optional(),
+  vacinasAplicadas: z.array(vacinaAplicadaEntrySchema).optional(),
+  comportamento: z.array(comportamentoEntrySchema).optional(),
 });
 
 function idFromUnknown(value) {
@@ -47,6 +73,10 @@ export const llmCarePlanSchema = z.preprocess((value) => {
 }, z.object({
   ids: z.array(z.string()).default([]),
 }));
+
+export const llmDescriptionSchema = z.object({
+  description: z.string().min(1),
+});
 
 export const carePlanItemSchema = z.object({
   planItemName: z.string().min(1),

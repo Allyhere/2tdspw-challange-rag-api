@@ -6,6 +6,12 @@ A ideia do projeto é mostrar GraphRAG na prática: o modelo de linguagem **não
 
 O Compose é o ambiente local. Para a demo no Azure, veja [Hospedagem da demo](#hospedagem-da-demo).
 
+## Vídeo
+
+Link do YouTube (não listado): cole aqui depois da publicação.
+
+O roteiro de cerca de 5 minutos está em [docs/pitch.md](docs/pitch.md).
+
 ---
 
 ## Como usar
@@ -48,7 +54,7 @@ curl -sf -X POST http://localhost:3000/v1/care-plan \
   }'
 ```
 
-Para validar os casos de raça (Labrador, Persa) e SRD (cão e gato) e recusar qualquer `planItemName` que não esteja no CSV:
+Para validar os casos de raça (Labrador, Persa), SRD (cão e gato), dermatite, comportamento e vacina já aplicada, e recusar qualquer `planItemName` que não esteja no CSV:
 
 ```bash
 sh scripts/request.sh
@@ -131,7 +137,7 @@ Defina `EXPO_PUBLIC_RAG_API_URL` (iOS Simulator: `http://localhost:3000`; emulad
 
 Você envia o perfil de um cão ou gato. A API devolve:
 
-1. **`carePlanDescription`** — um resumo em pt-BR do animal e das prioridades do plano.
+1. **`carePlanDescription`** — descrição em pt-BR gerada depois do grounding. Se o modelo citar um item que não está no plano, a API usa o texto montado pelo perfil e pelos itens.
 2. **`carePlan`** — lista de itens da clínica (vacina, exame, terapia, procedimento), com recorrência e duração.
 3. **`sources`** — documentos de diretriz que o retriever achou relevantes (título, URL, editora).
 
@@ -188,7 +194,8 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 | `api/src/neo4j.js` | Cypher: filtro de tratamentos, busca vetorial, cache (`breed`/`species`). |
 | `api/src/config.js` | URI, modelos Gemini, `VECTOR_K` (padrão 8, alvo 8–12). |
 | `api/src/gemini.js` | Cliente REST: generateContent (JSON schema) e batchEmbedContents. |
-| `api/prompts/carePlan.md` | Prompt do plano: “copie ids do catálogo”. |
+| `api/prompts/carePlan.md` | Prompt do plano: ids do catálogo, com os trechos recuperados. |
+| `api/prompts/carePlanDescription.md` | Descrição em pt-BR só com os itens já ancorados. |
 | `api/prompts/careInvite.md` | Prompt do convite WhatsApp: reply + intent. |
 | `api/data/seed.js` | One-shot: espera Neo4j/Gemini e chama `runIngest`. |
 | `api/data/clinica-catalogo.csv` | Menu real da clínica (ficção). |
@@ -205,7 +212,7 @@ A API não guarda estado em memória além da conexão. Conhecimento clínico e 
 1. **Filtro estruturado (grafo)** — “quais itens do catálogo este pet *pode* receber?”
 2. **Busca vetorial (embeddings)** — “quais trechos de diretriz *parecem* relevantes para este caso?”
 
-O LLM recebe o pet + a lista já filtrada e devolve só ids. As fontes da busca vetorial vão no campo `sources`, para o cliente mostrar de onde veio o respaldo.
+O LLM recebe o pet, a lista já filtrada e os trechos recuperados, e devolve só ids. As fontes da busca vetorial também vão no campo `sources`. A descrição é uma segunda chamada, limitada aos itens que sobreviveram ao grounding.
 
 ### O que vive no grafo
 
@@ -229,31 +236,31 @@ O seed (e `POST /v1/ingest`) **não apaga o grafo**. Faz upsert de `Treatment` p
 payload
   │
   ├─ 1. Zod valida nome, raça, espécie, sexo, peso, idade, castração
-  │     (+ resumo / diagnóstico / prescrição / exames, se vierem)
+  │     (+ resumo, diagnóstico, prescrição, exames, consultas, medicamentos,
+  │      vacinas aplicadas e comportamento, se vierem)
   │
   ├─ 2. Cache demográfico
-  │     • sem dados de consulta → procura CachedCarePlan (hash da raça, espécie, sexo, peso, idade, castração e dos modelos)
-  │     • com dados de consulta → ignora o cache (o plano precisa refletir aquele atendimento)
+  │     • sem série clínica → procura CachedCarePlan (hash da raça, espécie, sexo, peso, idade, castração e dos modelos)
+  │     • com consulta, medicamento, vacina aplicada ou comportamento → ignora o cache
   │
-  ├─ 3. Em paralelo
-  │     • Cypher: Treatments cuja espécie/idade/peso/castração batem com o pet
-  │     • Gemini embeddings: vetoriza uma frase do tipo
-  │       "cachorro da raça Labrador, 28.5kg, 3 anos, macho, não castrado. Diagnóstico: …"
-  │       e em seguida busca os `VECTOR_K` chunks mais próximos (padrão 8, cosine) + Source
-  │     • LLM (gemini-3.5-flash-lite, temperature 0, JSON schema), assim que o catálogo chega
-  │       recebe o pet e o catálogo filtrado; responde {"ids":["v10","antirabica",…]}
-  │       Os chunks não entram no prompt: só viram `sources`. Falha de embedding zera as fontes
-  │       e o LLM continua.
+  ├─ 3. Em paralelo: Cypher do catálogo e embedding da frase do pet
+  │     A busca dos `VECTOR_K` chunks (padrão 8, cosine) termina antes do LLM
   │
-  ├─ 4. Grounding
+  ├─ 4. LLM (gemini-3.5-flash-lite, temperature 0, JSON schema)
+  │     recebe pet, catálogo filtrado e trechos; responde {"ids":["v10","antirabica",…]}
+  │     Falha de embedding zera as fontes e o LLM segue sem trechos
+  │
+  ├─ 5. Grounding
   │     cada id/nome é casado com o Treatment; metadados vêm do CSV, não do modelo
   │     se o modelo falhar ou não copiar ids → usa até 8 itens do filtro Cypher
   │
-  └─ 5. Monta a descrição em pt-BR e devolve sources únicas.
-        A gravação do cache (só sem contexto de consulta) não bloqueia a resposta.
+  └─ 6. Descrição em pt-BR sobre o plano ancorado e os mesmos trechos.
+        Se essa chamada falhar, ou se o texto citar um nome do catálogo fora do plano,
+        fica o texto montado pelo perfil e pelos itens.
+        A gravação do cache (descrição, plano e sources; só sem série clínica) não bloqueia a resposta.
 ```
 
-Tempos de cada etapa vão no header `Server-Timing` (`cache`, `embed`, `vector`, `catalog`, `llm`, `post`, `total`). Embed, busca vetorial e LLM correm juntos, então a soma dessas durações pode passar de `total`.
+Tempos de cada etapa vão no header `Server-Timing` (`cache`, `embed`, `vector`, `catalog`, `llm`, `post`, `total`). Catálogo e embedding correm juntos; `post` inclui a descrição. A soma dessas durações pode passar de `total`.
 
 ### Por que o modelo não inventa o menu
 
@@ -267,7 +274,7 @@ Isso é o “grounding”: geração ancorada em dados da clínica, não em mem�
 
 ### Cache
 
-A chave é um SHA-256 do perfil demográfico + nomes dos modelos. Dois Labradores iguais (mesmo peso, idade, sexo, castração) reaproveitam o plano. Um Thor com `diagnostico: "dermatite atópica"` **não** usa esse cache: o filtro `hasConsultaContext` força retrieval + LLM de novo, para o quadro clínico entrar na escolha (ex.: incluir `dermatite` e `raspado-pele`).
+A chave é um SHA-256 do perfil demográfico + nomes dos modelos. Dois Labradores iguais (mesmo peso, idade, sexo, castração) reaproveitam o plano e a descrição gravada. Um Thor com `diagnostico: "dermatite atópica"`, consulta, medicamento, vacina aplicada ou comportamento **não** usa esse cache: `hasConsultaContext` força retrieval + LLM de novo, para a série entrar na escolha (ex.: incluir `dermatite` e `raspado-pele`). Um cache antigo, sem descrição, volta ao texto montado em código.
 
 ---
 
@@ -279,7 +286,7 @@ A chave é um SHA-256 do perfil demográfico + nomes dos modelos. Dois Labradore
 
 `POST /v1/care-plan`
 
-`species`: `cachorro` | `gato`. Campos da consulta (`resumo`, `diagnostico`, `prescription`, `exams`) são opcionais.
+`species`: `cachorro` | `gato`. São opcionais o quadro atual (`resumo`, `diagnostico`, `prescription`, `exams`, `currentTreatments`) e a série enviada pelo backend da CLYVO (`consultas`, `medicamentos`, `vacinasAplicadas`, `comportamento`). Esta API usa a série na busca e na escolha; não a persiste como prontuário.
 
 ```json
 {
@@ -293,7 +300,11 @@ A chave é um SHA-256 do perfil demográfico + nomes dos modelos. Dois Labradore
   "resumo": "Tosse seca há 3 dias",
   "diagnostico": "Suspeita de traqueobronquite",
   "prescription": ["V10"],
-  "exams": [{ "name": "Hemograma", "date": "2026-09-08" }]
+  "exams": [{ "name": "Hemograma", "date": "2026-09-08" }],
+  "consultas": [{ "data": "2026-08-01", "resumo": "retorno", "diagnostico": "otite" }],
+  "medicamentos": [{ "nome": "prednisolona", "desde": "2026-09-01" }],
+  "vacinasAplicadas": [{ "nome": "V10", "data": "2026-01-10" }],
+  "comportamento": [{ "data": "2026-10-01", "relato": "coceira nas patas" }]
 }
 ```
 
@@ -301,7 +312,7 @@ Resposta:
 
 ```json
 {
-  "carePlanDescription": "resumo em pt-BR",
+  "carePlanDescription": "descrição em pt-BR do plano ancorado",
   "carePlan": [
     {
       "planItemName": "V10",
@@ -365,6 +376,17 @@ Os testes falham se uma rota pública, segurança Firebase ou restrição import
 
 ## Dados
 
+Origem, estrutura e uso:
+
+| Dado | Origem | Estrutura | Uso |
+| --- | --- | --- | --- |
+| Perfil do pet | App, em cada `POST /v1/care-plan` | `name`, `breed`, `species`, `sex`, `weight`, `age`, `isCastrated` | Filtro Cypher, frase de embedding e chave do cache |
+| Quadro da consulta | App | `resumo`, `diagnostico`, `prescription`, `exams` | Desvia o cache e entra na escolha dos ids |
+| Série clínica | Backend da CLYVO, no mesmo JSON. Esta API não guarda prontuário | `consultas` (`data`, `resumo`, `diagnostico`), `medicamentos` (`nome`, `desde`, `ate`), `vacinasAplicadas` (`nome`, `data`), `comportamento` (`relato`, `data`) | Frase de embedding, prompt dos ids e descrição. Vacina ainda dentro do intervalo sai da prioridade. Prurido puxa dermatite |
+| Catálogo | `api/data/clinica-catalogo.csv` | id, nome, tipo, espécie, recorrência, intervalo, duração, faixas | Único menu. Recorrência e duração vêm do nó `Treatment` |
+| Diretrizes | `api/data/docs/*.md` | parágrafos com front-matter `fonte`, `url`, `editora` | Chunks de 768 dimensões. Condicionam os ids, a descrição e o campo `sources` |
+| Conversa | Neo4j, depois do plano | `Conversation` e `Message` | Convite de uma etapa e pergunta ancorada nela |
+
 - Catálogo da clínica (ficção): `api/data/clinica-catalogo.csv`
 - Documentos para embedding (resumos em pt-BR, com URL da fonte):
   - WSAVA 2024 — [diretrizes de vacinação](https://wsava.org/global-guidelines/vaccination-guidelines/)
@@ -383,6 +405,19 @@ curl -sf -X POST http://localhost:3000/v1/ingest
 ```
 
 (Ou `docker compose up --force-recreate --no-deps seed`, ou `npm run seed` na pasta `api`.)
+
+---
+
+## Resultados parciais
+
+Com a API no ar, os casos de raça, dermatite, comportamento e vacina já aplicada mais medicamento:
+
+```bash
+sh scripts/request.sh
+node scripts/report-results.mjs
+```
+
+O segundo comando grava [docs/resultados.md](docs/resultados.md): pet, itens do catálogo, fontes e tempos do header `Server-Timing`. Passe a URL se não for a local (`node scripts/report-results.mjs https://<fqdn>`).
 
 ---
 

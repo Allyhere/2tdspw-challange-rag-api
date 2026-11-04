@@ -27,5 +27,8 @@ run_case "Labrador" '{"name":"Thor","breed":"Labrador","species":"cachorro","sex
 run_case "Persa" '{"name":"Luna","breed":"Persa","species":"gato","sex":"femea","weight":4,"age":2,"isCastrated":true}'
 run_case "Cão SRD" '{"name":"Mel","breed":"SRD","species":"cachorro","sex":"femea","weight":12,"age":4,"isCastrated":true}'
 run_case "Gato SRD" '{"name":"Mingau","breed":"SRD","species":"gato","sex":"macho","weight":4.5,"age":3,"isCastrated":false}'
+run_case "Dermatite" '{"name":"Thor","breed":"Labrador","species":"cachorro","sex":"macho","weight":28.5,"age":3,"isCastrated":false,"diagnostico":"dermatite atópica","resumo":"prurido e lesão de pele"}'
+run_case "Comportamento" '{"name":"Thor","breed":"Labrador","species":"cachorro","sex":"macho","weight":28.5,"age":3,"isCastrated":false,"comportamento":[{"data":"2026-10-01","relato":"coceira e prurido nas patas"}]}'
+run_case "Vacina e medicamento" '{"name":"Thor","breed":"Labrador","species":"cachorro","sex":"macho","weight":28.5,"age":3,"isCastrated":false,"vacinasAplicadas":[{"nome":"V10","data":"2026-08-01"}],"medicamentos":[{"nome":"prednisolona","desde":"2026-09-01"}]}'
 
 echo "OK: respostas válidas e nomes apenas do catálogo."

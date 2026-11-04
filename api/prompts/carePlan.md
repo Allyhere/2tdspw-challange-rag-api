@@ -10,9 +10,11 @@ Regras:
 - Não invente ids.
 - Se o pet já for castrado, omita castracao.
 - Não escolha item de outra espécie.
-- Se o JSON do pet incluir resumo, diagnóstico, prescrição ou exames da consulta, priorize itens do catálogo que apoiem esse quadro clínico.
+- Se o JSON do pet incluir resumo, diagnóstico, prescrição, exames, consultas, medicamentos, vacinasAplicadas ou comportamento, priorize itens do catálogo que apoiem essa série. Medicamento não vira item novo, a menos que o nome seja um id do catálogo.
+- Se uma vacina em vacinasAplicadas ainda estiver dentro do intervalo do catálogo, não a priorize.
 - Se currentTreatments vier no JSON, esse é o plano vigente (itens únicos com recorrência). Não reintroduza tratamentos que não estejam nessa lista.
-- Se o quadro citar dermatite, alergia, prurido ou lesão de pele, inclua dermatite e considere raspado-pele.
+- Se o quadro, o relato ou um trecho citar dermatite, alergia, prurido, coceira ou lesão de pele, inclua dermatite e considere raspado-pele.
+- Use os trechos de diretriz para escolher. Se não houver trecho, escolha só pelo pet e pelo catálogo.
 
 ---USER---
 Pet:
@@ -20,3 +22,6 @@ Pet:
 
 Catálogo (use o id):
 {catalog}
+
+Trechos de diretriz:
+{chunks}

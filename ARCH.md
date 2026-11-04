@@ -96,6 +96,7 @@ flowchart TB
     cfg["src/config.js"]
     p1["prompts/carePlan.md"]
     p2["prompts/careInvite.md"]
+    p3["prompts/carePlanDescription.md"]
 
     index --> app
     app --> rag
@@ -105,6 +106,7 @@ flowchart TB
     rag --> neo
     rag --> gem
     rag --> p1
+    rag --> p3
     conv --> store
     conv --> gem
     conv --> neo
@@ -120,13 +122,13 @@ flowchart TB
 | --- | --- |
 | `api/src/index.js` | HTTP listen; timeouts disabled (LLM can be slow); close Bolt on shutdown |
 | `api/src/app.js` | `/health`, `/v1/care-plan`, `/v1/ingest`, `/v1/conversations` |
-| `api/src/rag.js` | Cache → parallel embed + Cypher catalog → vector kNN → LLM ids → ground → describe |
+| `api/src/rag.js` | Cache → catálogo e embedding em paralelo → chunks → LLM ids → ground → descrição |
 | `api/src/conversation.js` | Start invite; inbound intent → `accepted` / `declined`; RAG on questions |
 | `api/src/conversationStore.js` | Neo4j `Conversation`/`Message`; memory store for tests |
 | `api/src/ingest.js` | Upsert CSV; hash-skip markdown; chunk >40 chars; invalidate cache |
 | `api/src/neo4j.js` | Treatment filter, vector query, `CachedCarePlan` |
 | `api/src/gemini.js` | REST `generateContent` + `batchEmbedContents` (batch 16) |
-| `api/src/schema.js` | Pet, LLM ids, conversation intake, turn `{ reply, intent }` |
+| `api/src/schema.js` | Pet (incluindo série clínica), LLM ids, descrição, conversation intake, turn `{ reply, intent }` |
 | `api/data/clinica-catalogo.csv` | Allowed menu (stable `id`) |
 | `api/data/docs/*.md` | Breed-specific and global guidelines |
 | `scripts/harvest-allowlist.mjs` | Prints candidate URLs; does not crawl |
@@ -242,13 +244,13 @@ sequenceDiagram
     participant Neo as Neo4j
 
     Client->>API: POST care-plan
-    alt no consulta context
+    alt no clinical series
         API->>Cache: lookup demographic cache
         Cache-->>API: hit or miss
         opt cache hit
             API-->>Client: cached plan with sources
         end
-    else consulta context present
+    else clinical series present
         Note over API: cache bypass
     end
 
@@ -262,14 +264,19 @@ sequenceDiagram
     API->>Neo: vector query guideline chunks
     Neo-->>API: chunks with Source
 
-    API->>Gemini: generate JSON ids temperature 0
+    API->>Gemini: rank ids with pet catalog and chunks
     Gemini-->>API: catalog ids
 
     API->>API: ground ids to Treatment fields
     alt no valid ids
         API->>API: first 8 Cypher treatments
     end
-    API->>Cache: save payload when cacheable
+    API->>Gemini: description of the grounded plan
+    Gemini-->>API: description text
+    alt description cites an off-plan catalog name or the call fails
+        API->>API: template description
+    end
+    API->>Cache: save plan description and sources when cacheable
     API-->>Client: description plan with sources
 ```
 
@@ -283,9 +290,13 @@ Built in `buildPetQuery`:
 . Diagnóstico: …
 . Prescrição: …
 . Exames: …
+. Consultas: …
+. Medicamentos: …
+. Vacinas aplicadas: …
+. Comportamento: …
 ```
 
-Breed docs are written so chunks start with `Cachorro da raça Labrador` / `Gato da raça Persa`, matching that query shape.
+Breed docs are written so chunks start with `Cachorro da raça Labrador` / `Gato da raça Persa`, matching that query shape. The same chunks are inserted into `carePlan.md` before the model picks ids, and into `carePlanDescription.md` after grounding.
 
 ### Three grounding layers
 
@@ -295,7 +306,7 @@ flowchart TB
         Cypher["Cypher: species / age / weight / castration"]
     end
     subgraph L2 [2. Prompt contract]
-        Prompt["carePlan.md: copy catalog ids only"]
+        Prompt["carePlan.md: copy catalog ids, conditioned on chunks"]
         Schema["Gemini responseSchema { ids: string[] }"]
     end
     subgraph L3 [3. Application grounding]
@@ -424,7 +435,7 @@ flowchart TB
 
 | Concern | POC choice |
 | --- | --- |
-| Auth | None |
+| Auth | Firebase ID token on `/v1/conversations`; `POST /v1/care-plan` has no token |
 | Multi-clinic | Single catalog |
 | HA | None; API waits for seed then serves |
 | Secrets | `.env` / Compose `env_file` |

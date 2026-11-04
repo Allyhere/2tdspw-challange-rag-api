@@ -9,10 +9,32 @@ import {
   saveCachedCarePlan,
   searchGuidelineChunks,
 } from "./neo4j.js";
-import { llmCarePlanSchema } from "./schema.js";
+import { llmCarePlanSchema, llmDescriptionSchema } from "./schema.js";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const promptTemplate = readFileSync(join(rootDir, "prompts/carePlan.md"), "utf8");
+const descriptionTemplate = readFileSync(
+  join(rootDir, "prompts/carePlanDescription.md"),
+  "utf8",
+);
+const catalogNomes = readFileSync(join(rootDir, "data/clinica-catalogo.csv"), "utf8")
+  .trim()
+  .split(/\r?\n/)
+  .slice(1)
+  .map((line) => line.split(",")[1])
+  .filter(Boolean);
+
+const DESCRIPTION_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    description: { type: "STRING" },
+  },
+  required: ["description"],
+};
+
+function hasSeries(value) {
+  return Array.isArray(value) && value.length > 0;
+}
 
 function hasConsultaContext(pet) {
   const resumo = String(pet.resumo ?? "").trim();
@@ -24,7 +46,11 @@ function hasConsultaContext(pet) {
       diagnostico ||
       prescription.length ||
       exams.length ||
-      pet.currentTreatments !== undefined,
+      pet.currentTreatments !== undefined ||
+      hasSeries(pet.consultas) ||
+      hasSeries(pet.medicamentos) ||
+      hasSeries(pet.vacinasAplicadas) ||
+      hasSeries(pet.comportamento),
   );
 }
 
@@ -41,6 +67,23 @@ function buildPetQuery(pet) {
   }
   if (Array.isArray(pet.exams) && pet.exams.length > 0) {
     query += `. Exames: ${pet.exams.map((exam) => exam.name).join(", ")}`;
+  }
+  if (hasSeries(pet.consultas)) {
+    const bits = pet.consultas.map((item) =>
+      [item.data, item.resumo, item.diagnostico].filter(Boolean).join(": "),
+    );
+    query += `. Consultas: ${bits.join("; ")}`;
+  }
+  if (hasSeries(pet.medicamentos)) {
+    query += `. Medicamentos: ${pet.medicamentos.map((item) => item.nome).join(", ")}`;
+  }
+  if (hasSeries(pet.vacinasAplicadas)) {
+    query += `. Vacinas aplicadas: ${pet.vacinasAplicadas
+      .map((item) => `${item.nome} em ${item.data}`)
+      .join(", ")}`;
+  }
+  if (hasSeries(pet.comportamento)) {
+    query += `. Comportamento: ${pet.comportamento.map((item) => item.relato).join("; ")}`;
   }
   return query;
 }
@@ -194,6 +237,28 @@ function splitPrompt(template) {
   };
 }
 
+function formatChunks(chunks) {
+  if (!chunks?.length) return "(nenhum trecho)";
+  return chunks
+    .map((chunk) => {
+      const title = chunk.titulo ? `${chunk.titulo}: ` : "";
+      return `- ${title}${chunk.texto ?? ""}`;
+    })
+    .join("\n");
+}
+
+function descriptionCitesOffPlan(text, carePlan) {
+  const haystack = ` ${normalizeName(text)} `;
+  const allowed = new Set(
+    (carePlan ?? []).map((item) => normalizeName(item.planItemName)),
+  );
+  return catalogNomes.some((nome) => {
+    const name = normalizeName(nome);
+    if (!name || allowed.has(name)) return false;
+    return haystack.includes(` ${name} `);
+  });
+}
+
 function uniqueSources(chunks) {
   const seen = new Set();
   const sources = [];
@@ -209,7 +274,7 @@ function uniqueSources(chunks) {
   return sources;
 }
 
-async function invokeModel(pet, catalog) {
+async function invokeModel(pet, catalog, chunks) {
   const catalogText = catalog
     .map(
       (item) =>
@@ -221,13 +286,30 @@ async function invokeModel(pet, catalog) {
 
   const filled = promptTemplate
     .replace("{pet}", JSON.stringify(pet, null, 2))
-    .replace("{catalog}", catalogText || "(catálogo vazio)");
+    .replace("{catalog}", catalogText || "(catálogo vazio)")
+    .replace("{chunks}", formatChunks(chunks));
   const { system, user } = splitPrompt(filled);
 
   const raw = await geminiGenerateJson({ system, user });
   console.log("LLM raw:", raw.slice(0, 800));
   const parsed = extractJson(raw);
   return llmCarePlanSchema.parse(parsed);
+}
+
+async function invokeDescription(pet, carePlan, chunks) {
+  const filled = descriptionTemplate
+    .replace("{pet}", JSON.stringify(pet, null, 2))
+    .replace("{carePlan}", JSON.stringify(carePlan, null, 2))
+    .replace("{chunks}", formatChunks(chunks));
+  const { system, user } = splitPrompt(filled);
+  const raw = await geminiGenerateJson({
+    system,
+    user,
+    responseSchema: DESCRIPTION_SCHEMA,
+    maxOutputTokens: 1024,
+  });
+  const parsed = llmDescriptionSchema.parse(extractJson(raw));
+  return parsed.description.trim();
 }
 
 function roundMs(value) {
@@ -276,6 +358,7 @@ export async function generateCarePlan(pet, deps = {}) {
   const findTreatments = deps.findTreatments ?? findTreatmentsForPet;
   const searchChunks = deps.searchChunks ?? searchGuidelineChunks;
   const generate = deps.generate ?? invokeModel;
+  const describe = deps.describe ?? invokeDescription;
   const readCache = deps.readCache ?? getCachedCarePlan;
   const writeCache = deps.writeCache ?? saveCachedCarePlan;
 
@@ -290,9 +373,10 @@ export async function generateCarePlan(pet, deps = {}) {
     timings.cacheStatus = "hit";
     timings.total = roundMs(performance.now() - totalStart);
     console.log("Cache hit plano de cuidados");
+    const stored = String(cached.carePlanDescription ?? "").trim();
     return {
       plan: {
-        carePlanDescription: fallbackDescription(pet, cached.carePlan),
+        carePlanDescription: stored || fallbackDescription(pet, cached.carePlan),
         carePlan: cached.carePlan,
         sources: cached.sources ?? [],
       },
@@ -332,20 +416,18 @@ export async function generateCarePlan(pet, deps = {}) {
   timings.catalog = roundMs(performance.now() - catalogStart);
   if (!catalog?.length) throw emptyCatalogError();
 
-  const llmTask = (async () => {
-    const llmStart = performance.now();
-    try {
-      const generated = await generate(pet, catalog);
-      return generated.ids ?? [];
-    } catch (error) {
-      console.warn("LLM falhou, usando só o catálogo:", error.message);
-      return [];
-    } finally {
-      timings.llm = roundMs(performance.now() - llmStart);
-    }
-  })();
+  const chunks = await sourcesTask;
 
-  const [chunks, ids] = await Promise.all([sourcesTask, llmTask]);
+  const llmStart = performance.now();
+  let ids = [];
+  try {
+    const generated = await generate(pet, catalog, chunks);
+    ids = generated.ids ?? [];
+  } catch (error) {
+    console.warn("LLM falhou, usando só o catálogo:", error.message);
+  } finally {
+    timings.llm = roundMs(performance.now() - llmStart);
+  }
 
   let carePlan = planFromIds(ids, catalog);
   if (carePlan.length === 0) {
@@ -358,14 +440,27 @@ export async function generateCarePlan(pet, deps = {}) {
   }
 
   const postStart = performance.now();
+  let carePlanDescription = fallbackDescription(pet, carePlan);
+  try {
+    const drafted = await describe(pet, carePlan, chunks);
+    const text = String(drafted ?? "").trim();
+    if (text && !descriptionCitesOffPlan(text, carePlan)) {
+      carePlanDescription = text;
+    } else if (text) {
+      console.warn("Descrição citou item fora do plano, usando texto de fallback");
+    }
+  } catch (error) {
+    console.warn("Descrição do modelo indisponível:", error.message);
+  }
   const plan = {
-    carePlanDescription: fallbackDescription(pet, carePlan),
+    carePlanDescription,
     carePlan,
     sources: uniqueSources(chunks),
   };
   if (!skipCache) {
     writeCache(pet, {
       carePlan: plan.carePlan,
+      carePlanDescription: plan.carePlanDescription,
       sources: plan.sources,
     }).catch((error) => console.warn("Cache não gravado:", error.message));
   }
